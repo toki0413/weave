@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#EDE7DA">
+  <link rel="manifest" href="./manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>织忆·认知花园</title>
+  <style>
+    /* Reset + 全局样式占位，main.js 会动态注入完整 CSS */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif; }
+    /* 骨架屏 */
+    .skeleton {
+      background: linear-gradient(90deg, #EDE7DA 25%, #F7F4EE 50%, #EDE7DA 75%);
+      background-size: 200% 100%;
+      animation: skeleton-shimmer 1.5s infinite;
+      border-radius: 8px;
+    }
+    @keyframes skeleton-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-header {
+      height: 56px;
+      width: 100%;
+      border-radius: 0;
+    }
+    .skeleton-panel {
+      width: 260px;
+      height: 100%;
+    }
+    .skeleton-canvas {
+      flex: 1;
+      height: 100%;
+    }
+    .skeleton-timeline {
+      height: 100px;
+      width: 100%;
+      border-radius: 0;
+    }
+    .skeleton-wrap {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      opacity: 1;
+      transition: opacity 0.4s ease;
+    }
+    .skeleton-wrap.fade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .skeleton-main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="skeleton" class="skeleton-wrap" style="position:relative;">
+      <div id="skeleton-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#5C5448;font-size:1rem;font-weight:500;z-index:10;white-space:nowrap;">正在加载…</div>
+      <div class="skeleton skeleton-header"></div>
+      <div class="skeleton-main">
+        <div class="skeleton skeleton-panel"></div>
+        <div class="skeleton skeleton-canvas"></div>
+        <div class="skeleton skeleton-panel"></div>
+      </div>
+      <div class="skeleton skeleton-timeline"></div>
+    </div>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "织忆·认知花园",
+  "short_name": "织忆",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EDE7DA",
+  "theme_color": "#EDE7DA",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

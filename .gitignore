@@ -1,0 +1,98 @@
+# ========== 依赖 / 构建产物 ==========
+node_modules/
+frontend/dist/
+dist/
+backend/build/
+backend/release/
+release/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+*.egg-info/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# ========== 数据库 / 备份 ==========
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/backups/
+
+# ========== 日志 ==========
+logs/
+*.log
+final_test.log
+final_validation.log
+
+# ========== 临时 / 调试文件 ==========
+composer_extract*.txt
+parse_session*.py
+extract_ui.py
+insert_compact.py
+replace_globals.py
+scan_missing_elements.py
+split_composer.py
+session_summary*.txt
+session_*/
+webbridge*.json
+webbridge*.png
+*TEMP*
+*temp*
+test_ai_level.json
+test_backend.py
+test_reg.py
+server.js
+src-tauri/
+uhpc_ec_ppt/
+zhiyi-cognitive-garden-prod.html
+e2e-run*.log
+
+# ========== 截图 ==========
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+
+# ========== 测试产物 ==========
+frontend/test-results/
+playwright-report/
+test-results/
+
+# ========== 上传文件 ==========
+backend/uploads/
+
+# ========== 其他项目残留文档 ==========
+ASSET_MANIFEST.md
+AUDIT_REPORT.md
+FULL_MULTIDIMENSIONAL_DATA_MATRIX.md
+MANUSCRIPT_CONSISTENCY_REPORT.md
+PLAN-v3.md
+huginn_vs_coding_agents_gap_analysis.md
+intuita*.md
+mathbeat-*.md
+repair_plan.md
+test-report-zhiyi-cognitive-garden.md
+
+# ========== IDE / 编辑器 ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ========== 环境配置 ==========
+.env
+.env.local
+.env.*.local

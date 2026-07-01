@@ -1,0 +1,55 @@
+{
+  "name": "织忆·认知花园",
+  "short_name": "织忆",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EDE7DA",
+  "theme_color": "#5C8D5A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%235C8D5A' rx='36'/%3E%3Ctext x='96' y='120' font-size='96' text-anchor='middle' font-family='Segoe UI, Arial'%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%235C8D5A' rx='96'/%3E%3Ctext x='256' y='340' font-size='280' text-anchor='middle' font-family='Segoe UI, Arial'%3E%F0%9F%8C%BF%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "老人端",
+      "short_name": "老人端",
+      "description": "快速进入老人端模式",
+      "url": "/?mode=elderly"
+    },
+    {
+      "name": "家属端",
+      "short_name": "家属端",
+      "description": "快速进入家属端模式",
+      "url": "/?mode=family"
+    },
+    {
+      "name": "医生端",
+      "short_name": "医生端",
+      "description": "快速进入医生端模式",
+      "url": "/?mode=doctor"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 640'%3E%3Crect width='320' height='640' fill='%23EDE7DA'/%3E%3Crect x='20' y='40' width='280' height='40' fill='%235C8D5A' rx='8'/%3E%3Crect x='20' y='100' width='120' height='120' fill='%23D5CCBC' rx='8'/%3E%3Crect x='160' y='100' width='140' height='60' fill='%23D5CCBC' rx='8'/%3E%3Crect x='20' y='240' width='280' height='200' fill='%23C5B8A4' rx='8'/%3E%3Crect x='20' y='460' width='280' height='80' fill='%23D5CCBC' rx='8'/%3E%3Ctext x='160' y='620' font-size='14' fill='%235C5448' text-anchor='middle'%3E首页占位%3C/text%3E%3C/svg%3E",
+      "sizes": "320x640",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 320'%3E%3Crect width='640' height='320' fill='%23F7F4EE'/%3E%3Ccircle cx='320' cy='160' r='80' fill='none' stroke='%234A7C4A' stroke-width='4'/%3E%3Ccircle cx='260' cy='120' r='20' fill='%234A7C4A'/%3E%3Ccircle cx='380' cy='120' r='20' fill='%23B86B4C'/%3E%3Ccircle cx='320' cy='220' r='20' fill='%233D6FA8'/%3E%3Cline x1='260' y1='120' x2='380' y2='120' stroke='%23D5CCBC' stroke-width='2'/%3E%3Cline x1='260' y1='120' x2='320' y2='220' stroke='%23D5CCBC' stroke-width='2'/%3E%3Cline x1='380' y1='120' x2='320' y2='220' stroke='%23D5CCBC' stroke-width='2'/%3E%3Ctext x='320' y='300' font-size='14' fill='%235C5448' text-anchor='middle'%3E记忆图谱占位%3C/text%3E%3C/svg%3E",
+      "sizes": "640x320",
+      "type": "image/svg+xml",
+      "form_factor": "wide"
+    }
+  ]
+}
