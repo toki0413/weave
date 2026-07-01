@@ -46,7 +46,6 @@ session_*/
 webbridge*.json
 webbridge*.png
 *TEMP*
-*temp*
 test_ai_level.json
 test_backend.py
 test_reg.py
