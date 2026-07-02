@@ -149,7 +149,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='cognitive-garden',
+    name='weave',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

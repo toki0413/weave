@@ -35,8 +35,8 @@ function renderHeader() {
   var header = el('div', { className: 'header' });
   var left = el('div', { className: 'header-left' });
   left.appendChild(el('div', { className: 'header-logo' }, '🌿'));
-  left.appendChild(el('span', { className: 'header-title' }, '织忆'));
-  left.appendChild(el('span', { className: 'header-sub' }, '认知花园'));
+  left.appendChild(el('span', { className: 'header-title' }, 'Weave'));
+  left.appendChild(el('span', { className: 'header-sub' }, '织忆'));
   header.appendChild(left);
 
   var right = el('div', { className: 'header-right' });

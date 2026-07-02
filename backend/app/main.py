@@ -124,8 +124,8 @@ from app.services.kms import init_kms
 init_kms()
 
 app = FastAPI(
-    title="Cognitive Garden API",
-    description="织忆·认知花园 - 认知辅助工具后端",
+    title="Weave API",
+    description="Weave · 织忆 - 认知辅助工具后端",
     version="2.1.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
