@@ -29,6 +29,7 @@ async def export_data(db: Session = Depends(get_db), current_user: User = Depend
         "version": "1.0",
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "user": {
+            "username": current_user.username,
             "phone": current_user.phone,
             "name": current_user.name,
             "role": current_user.role,
@@ -80,7 +81,8 @@ async def export_data(db: Session = Depends(get_db), current_user: User = Depend
 
 # ========== 备份导入校验模型 ==========
 class _BackupUser(BaseModel):
-    phone: str
+    username: Optional[str] = None
+    phone: Optional[str] = None
     name: Optional[str] = None
     role: Optional[str] = None
     created_at: Optional[str] = None
@@ -156,7 +158,13 @@ async def import_data(file: UploadFile = File(...), db: Session = Depends(get_db
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"备份文件字段校验失败: {e}")
 
-    if payload.user.phone != current_user.phone:
+    # 备份匹配：优先 username，回退 phone（兼容旧备份文件）
+    backup_user = payload.user
+    matched = (
+        (backup_user.username and backup_user.username == current_user.username)
+        or (backup_user.phone and backup_user.phone == current_user.phone)
+    )
+    if not matched:
         raise HTTPException(status_code=403, detail="备份文件与当前账号不匹配")
 
     # 清除现有数据

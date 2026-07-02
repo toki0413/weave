@@ -99,8 +99,13 @@ def _run_migrations():
     try:
         from alembic.config import Config
         from alembic import command
-        alembic_cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
-        alembic_cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "alembic"))
+        # 打包后从 _MEIPASS 找 alembic；开发时从 backend 目录找
+        if hasattr(sys, '_MEIPASS'):
+            _alembic_base = Path(sys._MEIPASS)
+        else:
+            _alembic_base = Path(__file__).parent.parent
+        alembic_cfg = Config(str(_alembic_base / "alembic.ini"))
+        alembic_cfg.set_main_option("script_location", str(_alembic_base / "alembic"))
         command.upgrade(alembic_cfg, "head")
         logger.info("数据库迁移完成")
     except Exception as e:

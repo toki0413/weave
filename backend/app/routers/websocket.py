@@ -32,10 +32,10 @@ def _verify_ws_token(token: str) -> dict:
 
 async def _get_user_from_token(token: str, db: Session) -> User:
     payload = _verify_ws_token(token)
-    phone = payload.get("sub")
-    if not phone:
+    user_id = payload.get("sub")
+    if not user_id:
         raise HTTPException(status_code=401, detail="Token missing sub")
-    user = db.query(User).filter(User.phone == phone).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from typing import Optional
 import bcrypt
 import secrets
 import uuid
@@ -16,7 +17,7 @@ from app.services import key_manager
 from app.services import kms
 from app.services.audit import log_audit
 from app.redis_client import blacklist_token, is_token_blacklisted
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -25,14 +26,32 @@ settings = get_settings()
 
 # ========== Pydantic 请求模型 ==========
 class RecoveryPayload(BaseModel):
-    phone: str = Field(..., min_length=11, max_length=20, pattern=r"^1[3-9]\d{9}$")
+    # identifier 支持用户名或手机号；兼容老接口的 phone 字段
+    identifier: Optional[str] = None
+    phone: Optional[str] = None
     recovery_code: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6, max_length=128)
+
+    @model_validator(mode='after')
+    def _resolve_identifier(self):
+        if not self.identifier and not self.phone:
+            raise ValueError("需要 identifier 或 phone 字段")
+        if not self.identifier:
+            self.identifier = self.phone
+        return self
 
 
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6, max_length=128)
+
+
+def _find_user_by_identifier(db: Session, identifier: str) -> Optional[User]:
+    """优先按 username 查，找不到再按 phone 查"""
+    user = db.query(User).filter(User.username == identifier).first()
+    if user:
+        return user
+    return db.query(User).filter(User.phone == identifier).first()
 
 
 # ========== 工具函数 ==========
@@ -229,8 +248,8 @@ def get_current_user(
         raise credentials_exception
     try:
         payload = pyjwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        phone: str = payload.get("sub")
-        if phone is None:
+        user_id: str = payload.get("sub")
+        if user_id is None:
             raise credentials_exception
         # 拒绝 refresh token 被当作 access token 使用
         token_type = payload.get("type")
@@ -242,7 +261,7 @@ def get_current_user(
             raise credentials_exception
     except InvalidTokenError:
         raise credentials_exception
-    user = db.query(User).filter(User.phone == phone).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
     return user
@@ -252,9 +271,15 @@ def get_current_user(
 @router.post("/register", response_model=Token, dependencies=[rate_limit(3, 300)])
 def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     try:
-        existing = db.query(User).filter(User.phone == user.phone).first()
+        # username 唯一性校验
+        existing = db.query(User).filter(User.username == user.username).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Phone already registered")
+            raise HTTPException(status_code=400, detail="Username already registered")
+        # phone 如果填了也要唯一
+        if user.phone:
+            existing_phone = db.query(User).filter(User.phone == user.phone).first()
+            if existing_phone:
+                raise HTTPException(status_code=400, detail="Phone already registered")
 
         _validate_password(user.password)
 
@@ -273,10 +298,11 @@ def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
 
         db_user = User(
             id=user_id,
+            username=user.username,
             phone=user.phone,
             hashed_password=get_password_hash(user.password),
             role=user.role,
-            name=user.name or user.phone,
+            name=user.name or user.username,
             encryption_salt=encryption_salt,
             master_key_encrypted=master_key_encrypted,
             recovery_code_hash=_hash_recovery_code(recovery_code),
@@ -291,8 +317,8 @@ def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
         kek = _derive_kek(user.password, encryption_salt)
         key_manager.set_user_keys(db_user.id, kek, master_key)
 
-        access_token = create_access_token({"sub": db_user.phone})
-        refresh_token = create_refresh_token({"sub": db_user.phone})
+        access_token = create_access_token({"sub": db_user.id})
+        refresh_token = create_refresh_token({"sub": db_user.id})
         _persist_refresh_token(db, db_user.id, refresh_token, request)
 
         log_audit(
@@ -319,7 +345,7 @@ def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token, dependencies=[rate_limit(5, 300)])
 def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.phone == user.phone).first()
+    db_user = _find_user_by_identifier(db, user.identifier)
     if not db_user or not verify_password(user.password, db_user.hashed_password):
         log_audit(
             db, actor_role=None, action="login_failed",
@@ -327,15 +353,15 @@ def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
             status_code=401,
-            details={"phone": user.phone},
+            details={"identifier": user.identifier},
         )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     _cache_user_keys(db_user, user.password)
     db.commit()
 
-    access_token = create_access_token({"sub": db_user.phone})
-    refresh_token = create_refresh_token({"sub": db_user.phone})
+    access_token = create_access_token({"sub": db_user.id})
+    refresh_token = create_refresh_token({"sub": db_user.id})
     _persist_refresh_token(db, db_user.id, refresh_token, request)
 
     log_audit(
@@ -387,13 +413,13 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
         )
         if decoded.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="无效的 refresh token")
-        phone = decoded.get("sub")
-        if not phone:
+        user_id = decoded.get("sub")
+        if not user_id:
             raise HTTPException(status_code=401, detail="无效的 refresh token")
     except InvalidTokenError:
         raise HTTPException(status_code=401, detail="refresh token 已过期或无效")
 
-    user = db.query(User).filter(User.phone == phone).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
 
@@ -411,8 +437,8 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
     row.revoked_at = _utc_now()
     db.commit()
 
-    access_token = create_access_token({"sub": user.phone})
-    new_refresh = create_refresh_token({"sub": user.phone})
+    access_token = create_access_token({"sub": user.id})
+    new_refresh = create_refresh_token({"sub": user.id})
     _persist_refresh_token(db, user.id, new_refresh, request)
 
     return {
@@ -429,7 +455,7 @@ def recover_account(payload: RecoveryPayload, request: Request, db: Session = De
     KMS 启用后主密钥不再依赖密码，但恢复码仍作为应急备份：
     通过 RKEK 解出主密钥 → 重新生成恢复码并重新包装。
     """
-    user = db.query(User).filter(User.phone == payload.phone).first()
+    user = _find_user_by_identifier(db, payload.identifier)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     if not user.recovery_code_hash or not user.recovery_master_key_encrypted or not user.recovery_salt:

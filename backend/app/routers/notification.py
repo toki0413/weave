@@ -111,10 +111,16 @@ def mark_all_read(
 
 # ========== 家属-老人绑定 ==========
 def _find_elderly(db: Session, identifier: str) -> Optional[User]:
-    """根据手机号或姓名找老人账号，手机号优先"""
+    """根据用户名、手机号或姓名找老人账号"""
+    # username 优先
+    user = db.query(User).filter(User.username == identifier).first()
+    if user:
+        return user
+    # 手机号
     user = db.query(User).filter(User.phone == identifier).first()
     if user:
         return user
+    # 姓名 fallback
     return db.query(User).filter(User.name == identifier).first()
 
 

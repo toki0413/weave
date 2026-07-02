@@ -303,15 +303,17 @@ function computeDiff(current, previous) {
   return diff;
 }
 
-export async function register(phone, password, role = 'elderly', name = '') {
-  const data = await apiFetch('/auth/register', { method: 'POST', body: { phone, password, role, name } });
+export async function register(username, password, role = 'elderly', name = '', phone = undefined) {
+  const body = { username, password, role, name };
+  if (phone) body.phone = phone;
+  const data = await apiFetch('/auth/register', { method: 'POST', body });
   setToken(data.access_token);
   if (data.refresh_token) setRefreshToken(data.refresh_token);
   return data;
 }
 
-export async function login(phone, password) {
-  const data = await apiFetch('/auth/login', { method: 'POST', body: { phone, password } });
+export async function login(identifier, password) {
+  const data = await apiFetch('/auth/login', { method: 'POST', body: { identifier, password } });
   setToken(data.access_token);
   if (data.refresh_token) setRefreshToken(data.refresh_token);
   return data;

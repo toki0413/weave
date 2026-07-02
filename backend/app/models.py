@@ -9,9 +9,11 @@ from app.database import Base
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    phone = Column(String(20), unique=True, index=True, nullable=False)
+    # username 作为主登录标识，phone 改为可选（便于家属关联或短信通知）
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    phone = Column(String(20), unique=True, index=True, nullable=True)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum("elderly", "family", "doctor", "admin", name="user_role"), default="elderly")
     name = Column(String(100))

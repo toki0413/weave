@@ -22,6 +22,7 @@ from app.services.decline import (
 def _make_user(db, phone="13900000000"):
     """创建一个测试用户"""
     user = User(
+        username=phone,
         phone=phone,
         hashed_password="x",
         role="elderly",

@@ -151,6 +151,8 @@ function _renderForm() {
     loginTab.style.color = m === 'login' ? '#fff' : 'var(--ink2)';
     registerTab.style.background = m === 'register' ? 'var(--accent)' : '#fff';
     registerTab.style.color = m === 'register' ? '#fff' : 'var(--ink2)';
+    // 注册时才显示手机号和姓名（都是可选）
+    phoneWrap.style.display = m === 'register' ? 'block' : 'none';
     nameWrap.style.display = m === 'register' ? 'block' : 'none';
     submitBtn.textContent = m === 'login' ? '登录' : '注册';
     _showError('');
@@ -162,10 +164,14 @@ function _renderForm() {
   tabs.appendChild(registerTab);
   card.appendChild(tabs);
 
-  var phoneWrap = _input('auth-phone', 'text', '手机号', '请输入手机号');
+  // 登录时是「用户名/手机号」，注册时是「用户名」
+  var identifierWrap = _input('auth-identifier', 'text', '用户名', '请输入用户名');
+  var phoneWrap = _input('auth-phone', 'text', '手机号（可选）', '便于家属关联');
+  phoneWrap.style.display = 'none';
   var nameWrap = _input('auth-name', 'text', '姓名（可选）', '请输入姓名');
   nameWrap.style.display = 'none';
-  var passwordWrap = _input('auth-password', 'password', '密码', '至少6位');
+  var passwordWrap = _input('auth-password', 'password', '密码', '至少8位，含字母数字特殊字符');
+  card.appendChild(identifierWrap);
   card.appendChild(phoneWrap);
   card.appendChild(nameWrap);
   card.appendChild(passwordWrap);
@@ -185,19 +191,20 @@ function _renderForm() {
     className: 'btn-primary',
     style: { width: '100%', padding: '12px', fontSize: '1rem' },
     onclick: function() {
-      var phone = document.getElementById('auth-phone').value.trim();
+      var identifier = document.getElementById('auth-identifier').value.trim();
       var password = document.getElementById('auth-password').value;
-      var name = document.getElementById('auth-name').value.trim() || phone;
-      if (!phone || !password || password.length < 6) {
-        _showError('请输入手机号和至少6位密码');
+      var phone = document.getElementById('auth-phone').value.trim();
+      var name = document.getElementById('auth-name').value.trim() || identifier;
+      if (!identifier || !password || password.length < 6) {
+        _showError('请输入用户名和至少6位密码');
         return;
       }
 
       withLoading(submitBtn, function() {
         return import('../api/client.js').then(function(api) {
           var promise = mode === 'login'
-            ? api.login(phone, password)
-            : api.register(phone, password, 'elderly', name);
+            ? api.login(identifier, password)
+            : api.register(identifier, password, 'elderly', name, phone || undefined);
           return promise.then(function(data) {
             if (mode === 'register' && data.recovery_code) {
               _renderRecoveryCode(data.recovery_code);
@@ -254,8 +261,8 @@ function showAuthModal() {
   document.body.appendChild(_overlay);
   _renderForm();
   // 焦点管理：聚焦第一个输入框
-  var phoneInput = document.getElementById('auth-phone');
-  if (phoneInput) phoneInput.focus();
+  var identifierInput = document.getElementById('auth-identifier');
+  if (identifierInput) identifierInput.focus();
   // 焦点陷阱
   _restoreFocus = trapFocus(_overlay, _savedFocus);
 }

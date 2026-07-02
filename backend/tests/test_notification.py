@@ -180,7 +180,7 @@ def test_list_family_members_empty(client, auth_headers):
 # ========== 通知服务直接测试 ==========
 def test_create_anomaly_notification_no_family(db_session):
     """没有绑定家属时，创建异常通知应返回 0"""
-    user = User(id=str(uuid.uuid4()), phone="13900000010", hashed_password="x", role="elderly")
+    user = User(id=str(uuid.uuid4()), username="13900000010", hashed_password="x", role="elderly")
     db_session.add(user)
     db_session.commit()
 
@@ -191,8 +191,8 @@ def test_create_anomaly_notification_no_family(db_session):
 
 def test_create_anomaly_notification_with_family(db_session):
     """有绑定家属时，异常通知应写入家属账号"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000011", hashed_password="x", role="elderly", name="老人")
-    family = User(id=str(uuid.uuid4()), phone="13900000012", hashed_password="x", role="family", name="家属")
+    elderly = User(id=str(uuid.uuid4()), username="13900000011", hashed_password="x", role="elderly", name="老人")
+    family = User(id=str(uuid.uuid4()), username="13900000012", hashed_password="x", role="family", name="家属")
     db_session.add_all([elderly, family])
     db_session.commit()
 
@@ -214,8 +214,8 @@ def test_create_anomaly_notification_with_family(db_session):
 
 def test_create_anomaly_notification_empty(db_session):
     """空异常列表不发通知"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000013", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000014", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000013", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000014", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
     db_session.commit()
@@ -226,8 +226,8 @@ def test_create_anomaly_notification_empty(db_session):
 
 def test_create_decline_notification_normal_skip(db_session):
     """衰退分数正常时不发通知"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000015", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000016", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000015", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000016", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
     db_session.commit()
@@ -239,8 +239,8 @@ def test_create_decline_notification_normal_skip(db_session):
 
 def test_create_decline_notification_warning(db_session):
     """衰退分数关注级别时发 warning 通知"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000017", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000018", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000017", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000018", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
     db_session.commit()
@@ -261,8 +261,8 @@ def test_create_decline_notification_warning(db_session):
 
 def test_create_decline_notification_danger(db_session):
     """衰退分数警告级别时发 danger 通知"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000019", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000020", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000019", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000020", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
     db_session.commit()
@@ -277,8 +277,8 @@ def test_create_decline_notification_danger(db_session):
 
 def test_create_scale_reminder_no_history(db_session):
     """从未做过量表时也提醒"""
-    elderly = User(id=str(uuid.uuid4()), phone="13900000021", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000022", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000021", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000022", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
     db_session.commit()
@@ -294,8 +294,8 @@ def test_create_scale_reminder_no_history(db_session):
 def test_create_scale_reminder_recent_skip(db_session):
     """刚做过量表不久不提醒"""
     from app.models import ScaleRecord
-    elderly = User(id=str(uuid.uuid4()), phone="13900000023", hashed_password="x", role="elderly")
-    family = User(id=str(uuid.uuid4()), phone="13900000024", hashed_password="x", role="family")
+    elderly = User(id=str(uuid.uuid4()), username="13900000023", hashed_password="x", role="elderly")
+    family = User(id=str(uuid.uuid4()), username="13900000024", hashed_password="x", role="family")
     link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
     db_session.add_all([elderly, family, link])
 

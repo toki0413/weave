@@ -1,13 +1,24 @@
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # ========== Auth ==========
 class UserCreate(BaseModel):
-    phone: str = Field(..., min_length=11, max_length=20)
+    # username 是主登录标识；phone 可选。
+    # 老接口只传 phone 时，自动用 phone 当 username，保证向后兼容。
+    username: Optional[str] = Field(None, min_length=2, max_length=50)
     password: str = Field(..., min_length=6)
     role: str = "elderly"
     name: Optional[str] = None
+    phone: Optional[str] = Field(None, min_length=4, max_length=20)
+
+    @model_validator(mode='after')
+    def _resolve_username(self):
+        if not self.username and not self.phone:
+            raise ValueError("username 和 phone 至少需要填一个")
+        if not self.username:
+            self.username = self.phone
+        return self
 
     @field_validator("password")
     @classmethod
@@ -20,8 +31,18 @@ class UserCreate(BaseModel):
 
 
 class UserLogin(BaseModel):
-    phone: str
+    # identifier 兼容 username 和 phone；老客户端只传 phone 也能用
+    identifier: Optional[str] = None
+    phone: Optional[str] = None
     password: str
+
+    @model_validator(mode='after')
+    def _resolve_identifier(self):
+        if not self.identifier and not self.phone:
+            raise ValueError("需要 identifier 或 phone 字段")
+        if not self.identifier:
+            self.identifier = self.phone
+        return self
 
 class Token(BaseModel):
     access_token: str
@@ -50,7 +71,8 @@ class AuditLogOut(BaseModel):
 
 class UserOut(BaseModel):
     id: str
-    phone: str
+    username: str
+    phone: Optional[str] = None
     role: str
     name: Optional[str] = None
     created_at: datetime

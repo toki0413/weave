@@ -1,24 +1,21 @@
 // ============ I18N ============
+import zhDict from './locales/zh.json';
+import enDict from './locales/en.json';
+
 const DEFAULT_LANG = 'zh';
 const STORAGE_KEY = 'cg-lang';
 
 let _locale = null;
 let _dict = null;
 
-const _locales = {};
+const _locales = { zh: zhDict, en: enDict };
 
 async function loadLocale(lang) {
   if (_locales[lang]) return _locales[lang];
-  try {
-    const mod = await import(/* @vite-ignore */ `./locales/${lang}.json`);
-    _locales[lang] = mod.default || mod;
-    return _locales[lang];
-  } catch (e) {
-    if (lang !== DEFAULT_LANG) {
-      return loadLocale(DEFAULT_LANG);
-    }
-    return {};
+  if (lang !== DEFAULT_LANG) {
+    return loadLocale(DEFAULT_LANG);
   }
+  return {};
 }
 
 export async function initI18n() {
