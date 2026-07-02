@@ -46,6 +46,7 @@ session_*/
 webbridge*.json
 webbridge*.png
 *TEMP*
+!temporal_parser.py
 test_ai_level.json
 test_backend.py
 test_reg.py

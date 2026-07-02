@@ -81,13 +81,15 @@ async function main() {
   await page.screenshot({ path: path.join(__dirname, '01-landing.png') });
   console.log('截图 1: 未登录首页');
 
-  // 2. 注册弹窗
+  // 2. 注册弹窗 — 左侧面板里的"登录 / 注册"按钮触发 auth-modal
   await page.evaluate(() => {
-    const btn = document.querySelector('[data-action="auth"], .auth-trigger, .btn-login, #login-btn');
-    if (btn) btn.click();
-    else if (window.showAuthModal) window.showAuthModal();
+    for (const b of document.querySelectorAll('button')) {
+      const t = b.textContent.trim();
+      if (t === '登录 / 注册' || t === '登录' || t === '注册') { b.click(); break; }
+    }
   });
   await page.waitForTimeout(1000);
+  // 默认是登录模式，切到注册并填写示例数据
   await page.evaluate(() => {
     for (const t of document.querySelectorAll('button')) {
       if (t.textContent.trim() === '注册') { t.click(); break; }
