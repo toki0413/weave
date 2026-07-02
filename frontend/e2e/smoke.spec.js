@@ -13,15 +13,15 @@ test.describe('认知花园 E2E 测试', () => {
   });
 
   test('页面标题正确', async ({ page }) => {
-    await expect(page).toHaveTitle(/织忆·认知花园/);
+    await expect(page).toHaveTitle(/Weave.*织忆/);
   });
 
   test('Header 渲染正常', async ({ page }) => {
     const header = page.locator('.header');
     await expect(header).toBeVisible();
-    // header-title 只含"织忆"，header-sub 含"认知花园"，组合断言
-    await expect(page.locator('.header-title')).toContainText('织忆');
-    await expect(page.locator('.header-sub')).toContainText('认知花园');
+    // header-title 是 "Weave"，header-sub 是 "织忆"
+    await expect(page.locator('.header-title')).toContainText('Weave');
+    await expect(page.locator('.header-sub')).toContainText('织忆');
   });
 
   test('三视图切换正常', async ({ page }) => {

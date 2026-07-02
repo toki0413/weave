@@ -13,7 +13,7 @@ test.describe('认知记录完整链路 E2E 测试', () => {
 
   test('打开页面 → 输入叙事 → 识别并织网 → 确认编辑 → 提交 → 验证图谱 → 查看历史', async ({ page }) => {
     // 1. 打开页面（beforeEach 已完成）
-    await expect(page).toHaveTitle(/织忆·认知花园/);
+    await expect(page).toHaveTitle(/Weave.*织忆/);
 
     // 2. 输入叙事文本
     const input = page.locator('#voice-input');
