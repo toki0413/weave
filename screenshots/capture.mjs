@@ -101,16 +101,25 @@ async function main() {
   await page.screenshot({ path: path.join(__dirname, '02-register.png') });
   console.log('截图 2: 注册弹窗');
 
-  // 3. 已登录主界面 — addInitScript 在 JS 执行前注入 token
-  // 拦截 /auth/me：返回中性角色，避免简化版模式覆盖完整认知花园图谱界面
-  await page.route('**/api/v1/auth/me', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ id: 'demo', username: USERNAME, role: '', name: NAME }),
-    });
-  });
-  await page.addInitScript((t) => { localStorage.setItem('token', t); }, token);
+  // 3. 已登录主界面 — addInitScript 在 JS 执行前注入 token + 覆盖 fetch 拦截 /auth/me
+  // 用 fetch 覆盖而非 page.route，因为 service worker 会绕过 page.route
+  await page.addInitScript((info) => {
+    var token = info.token;
+    var name = info.name;
+    var username = info.username;
+    localStorage.setItem('token', token);
+    // 覆盖 fetch，拦截 /auth/me 返回中性角色，保留完整认知花园图谱界面
+    var origFetch = window.fetch;
+    window.fetch = function(url, opts) {
+      var u = typeof url === 'string' ? url : (url && url.url) || '';
+      if (u.indexOf('/auth/me') !== -1) {
+        return Promise.resolve(new Response(JSON.stringify({
+          id: 'demo', username: username, role: '', name: name
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return origFetch.apply(this, arguments);
+    };
+  }, { token: token, username: USERNAME, name: NAME });
   errors.length = 0;
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => {

@@ -29,7 +29,11 @@ ACTIVE_CONNECTIONS = Gauge('active_connections', 'Number of active connections')
 # 日志配置：控制台 + 文件轮转（5MB × 3 份）
 # 支持 CG_LOG_DIR 环境变量覆盖默认目录，便于沙箱/CI 环境重定向到可写路径
 log_dir = Path(os.environ.get("CG_LOG_DIR") or (Path.home() / ".cognitive-garden" / "logs"))
-log_dir.mkdir(parents=True, exist_ok=True)
+try:
+    log_dir.mkdir(parents=True, exist_ok=True)
+except OSError:
+    log_dir = Path(os.environ.get("TEMP") or ".") / "weave-logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
 log_level = logging.DEBUG if settings.debug else logging.INFO
 
 root_logger = logging.getLogger()
@@ -40,14 +44,30 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(console_fmt)
 console_handler.setLevel(log_level)
 root_logger.addHandler(console_handler)
-# 文件轮转
+# 文件轮转：frozen 模式下文件描述符可能被 uvicorn 接管，stream 失效时重开
+class SafeRotatingFileHandler(RotatingFileHandler):
+    def emit(self, record):
+        try:
+            if self.stream is None:
+                self.stream = self._open()
+            super().emit(record)
+        except (OSError, ValueError):
+            try:
+                self.stream = self._open()
+                super().emit(record)
+            except Exception:
+                self.handleError(record)
+
 file_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-file_handler = RotatingFileHandler(
-    log_dir / "app.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
-)
-file_handler.setFormatter(file_fmt)
-file_handler.setLevel(log_level)
-root_logger.addHandler(file_handler)
+try:
+    file_handler = SafeRotatingFileHandler(
+        log_dir / "app.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(file_fmt)
+    file_handler.setLevel(log_level)
+    root_logger.addHandler(file_handler)
+except OSError:
+    pass
 
 logger = logging.getLogger("cognitive_garden")
 logger.info("日志系统启动，日志目录: %s", log_dir)
