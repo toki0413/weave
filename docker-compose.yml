@@ -11,8 +11,50 @@ services:
     environment:
       - CG_PORT=8004
       - CG_HOST=0.0.0.0
+      # PostgreSQL（生产用；留空则回退到 SQLite）
+      - database_url=postgresql+psycopg2://cg_user:cg_pass@postgres:5432/cognitive_garden
+      # Redis（限流/SSE/token 黑名单；留空则降级到内存模式）
+      - redis_url=redis://redis:6379/0
+      # KMS：local（开发）/ env（单机生产）/ aws（云上生产）
+      - kms_provider=env
+      - kms_master_key=${CG_KMS_MASTER_KEY:-}
+      # JWT
+      - access_token_expire_minutes=30
+      - refresh_token_expire_days=7
     volumes:
-      - cg_data:/app/data
+      - cg_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cg-postgres
+    environment:
+      - POSTGRES_DB=cognitive_garden
+      - POSTGRES_USER=cg_user
+      - POSTGRES_PASSWORD=cg_pass
+    volumes:
+      - cg_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cg_user -d cognitive_garden"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: cg-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - cg_redis_data:/data
     restart: unless-stopped
 
   nginx:
@@ -30,4 +72,6 @@ services:
       - "with-nginx"
 
 volumes:
-  cg_data:
+  cg_uploads:
+  cg_pg_data:
+  cg_redis_data:

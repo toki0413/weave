@@ -245,3 +245,54 @@ class TrainingRecord(Base):
     completed_at = Column(DateTime, default=_utc_now)
 
     user = relationship("User")
+
+
+class RefreshToken(Base):
+    """Refresh Token 持久化（支持主动吊销）
+
+    access token 短期有效（30 分钟），通过 jti 黑名单吊销；
+    refresh token 长期有效（7 天），通过本表记录并支持批量吊销。
+    """
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    # SHA-256 hex 摘要，避免明文 token 落库
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    device_id = Column(String(255), nullable=True)  # 设备标识（可选）
+    user_agent = Column(String(500), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    # null = 有效；非 null = 已吊销时间
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utc_now)
+
+    user = relationship("User")
+
+
+class AuditLog(Base):
+    """操作审计日志（医疗数据合规要求）
+
+    记录谁在什么时候访问/修改了谁的敏感数据。
+    详见《个人信息保护法》《医疗机构数据安全管理办法》。
+    """
+    __tablename__ = "audit_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # 操作者（null = 匿名/系统操作）
+    actor_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    actor_role = Column(String(20), nullable=True)  # elderly/family/doctor/admin/system
+    action = Column(String(50), nullable=False)  # login/register/view/update/delete/export/share
+    resource_type = Column(String(50), nullable=True)  # session/scale_record/voice_message/user
+    resource_id = Column(String(36), nullable=True)
+    # 被访问数据所属的用户（医患场景下与 actor 不同）
+    target_user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    status_code = Column(Integer, nullable=True)  # HTTP 响应码
+    # 额外上下文（不记录敏感数据明文）
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=_utc_now, index=True)
+
+    actor = relationship("User", foreign_keys=[actor_id])
+    target = relationship("User", foreign_keys=[target_user_id])

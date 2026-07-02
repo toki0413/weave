@@ -110,6 +110,14 @@ def _run_migrations():
 
 _run_migrations()
 
+# 初始化 Redis（限流、SSE Pub/Sub、token 黑名单共享）
+from app.redis_client import init_redis
+init_redis()
+
+# 初始化 KMS（主密钥包装/解包）
+from app.services.kms import init_kms
+init_kms()
+
 app = FastAPI(
     title="Cognitive Garden API",
     description="织忆·认知花园 - 认知辅助工具后端",

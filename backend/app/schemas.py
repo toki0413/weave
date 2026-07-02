@@ -25,8 +25,28 @@ class UserLogin(BaseModel):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None  # 登录/刷新时下发，register 也有
     token_type: str = "bearer"
     recovery_code: Optional[str] = None  # 仅注册时返回一次
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=1)
+
+
+class AuditLogOut(BaseModel):
+    id: str
+    actor_id: Optional[str] = None
+    actor_role: Optional[str] = None
+    action: str
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
+    target_user_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    status_code: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 class UserOut(BaseModel):
     id: str

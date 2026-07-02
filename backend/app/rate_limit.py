@@ -1,20 +1,20 @@
-"""简单的内存式速率限制依赖。
+"""速率限制依赖
 
-用于单实例部署。若后续多实例部署，应替换为 Redis 等共享存储。
+生产环境使用 Redis 滑动窗口，支持多实例共享限流计数。
+无 Redis 时降级到内存滑动窗口（单实例有效）。
 """
 import os
 import time
 from collections import defaultdict
-from typing import Callable, List
+from typing import Callable
 
 from fastapi import Request, HTTPException, Depends
 
-# key -> 最近请求时间戳列表（单调递增）
-_buckets: dict[str, List[float]] = defaultdict(list)
+from app.redis_client import get_redis, is_redis_available, _mem_buckets
 
 
 def _get_client_ip(request: Request) -> str:
-    """获取客户端 IP，优先处理反向代理转发头。"""
+    """获取客户端 IP，优先处理反向代理转发头"""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -23,39 +23,53 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _clean_bucket(key: str, window: float) -> None:
-    """清理桶内过期的旧记录，只保留窗口期内最近 max_requests 条即可。"""
+def _mem_clean_bucket(key: str, window: float) -> None:
+    """内存模式：清理过期记录"""
     now = time.time()
-    timestamps = _buckets[key]
     cutoff = now - window
-    # 由于列表按时间递增，找到第一个未过期的位置后切片
-    start = 0
-    for i, ts in enumerate(timestamps):
-        if ts > cutoff:
-            start = i
-            break
-    else:
-        start = len(timestamps)
-    _buckets[key] = timestamps[start:]
+    timestamps = _mem_buckets.get(key, [])
+    _mem_buckets[key] = [ts for ts in timestamps if ts > cutoff]
 
 
 def rate_limit(max_requests: int = 10, window_seconds: int = 60) -> Callable:
-    """返回一个 FastAPI 依赖，用于限制同一 IP 在 window_seconds 内最多请求 max_requests 次。"""
+    """返回 FastAPI 依赖，基于 Redis 滑动窗口限流（降级内存）"""
 
     def _checker(request: Request) -> None:
         if max_requests <= 0:
             return
-        # 测试环境下自动关闭限流，避免测试共享全局状态导致失败
+        # 测试环境自动关闭
         if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("CG_DISABLE_RATE_LIMIT"):
             return
+
         ip = _get_client_ip(request)
-        key = f"{ip}:{request.method}:{request.url.path}"
-        _clean_bucket(key, window_seconds)
-        if len(_buckets[key]) >= max_requests:
+        key = f"rl:{ip}:{request.method}:{request.url.path}"
+
+        # Redis 滑动窗口
+        if is_redis_available():
+            r = get_redis()
+            import time as _time
+            now = _time.time()
+            pipe = r.pipeline()
+            pipe.zremrangebyscore(key, 0, now - window_seconds)
+            pipe.zadd(key, {str(now): now})
+            pipe.zcard(key)
+            pipe.expire(key, window_seconds)
+            results = pipe.execute()
+            count = results[2]
+            if count > max_requests:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"请求过于频繁，请在 {window_seconds} 秒后再试",
+                )
+            return
+
+        # 内存降级
+        _mem_clean_bucket(key, window_seconds)
+        if len(_mem_buckets.get(key, [])) >= max_requests:
             raise HTTPException(
                 status_code=429,
                 detail=f"请求过于频繁，请在 {window_seconds} 秒后再试",
             )
-        _buckets[key].append(time.time())
+        _mem_buckets.setdefault(key, []).append(time.time())
 
     return Depends(_checker)

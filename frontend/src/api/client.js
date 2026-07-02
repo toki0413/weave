@@ -11,11 +11,13 @@ import {
 const API_BASE = '/api/v1';
 
 let _token = '';
+let _refreshToken = '';
 let _lastSyncedState = null;
+// 并发 refresh 锁：同时多个 401 时只刷新一次
+let _refreshPromise = null;
 
 export function getToken() {
   if (_token) return _token;
-  // 页面刷新后内存 token 丢失，从 localStorage 恢复
   try { return localStorage.getItem('token') || ''; } catch (e) { return ''; }
 }
 export function setToken(token) {
@@ -27,7 +29,54 @@ export function setToken(token) {
 }
 export function clearToken() {
   _token = '';
-  try { localStorage.removeItem('token'); } catch (e) {}
+  _refreshToken = '';
+  try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
+  } catch (e) {}
+}
+
+export function getRefreshToken() {
+  if (_refreshToken) return _refreshToken;
+  try { return localStorage.getItem('refresh_token') || ''; } catch (e) { return ''; }
+}
+export function setRefreshToken(token) {
+  _refreshToken = token;
+  try {
+    if (token) localStorage.setItem('refresh_token', token);
+    else localStorage.removeItem('refresh_token');
+  } catch (e) {}
+}
+
+// access token 过期时用 refresh token 换新对
+async function tryRefresh() {
+  if (_refreshPromise) return _refreshPromise;
+  const rt = getRefreshToken();
+  if (!rt) return false;
+
+  _refreshPromise = (async function() {
+    try {
+      const resp = await fetch(API_BASE + '/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+      if (!resp.ok) {
+        clearToken();
+        return false;
+      }
+      const data = await resp.json();
+      setToken(data.access_token);
+      if (data.refresh_token) setRefreshToken(data.refresh_token);
+      return true;
+    } catch (e) {
+      clearToken();
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+  return _refreshPromise;
 }
 
 // 内存缓存
@@ -52,7 +101,7 @@ async function fetchWithRetry(url, options) {
     try {
       var _opts = {};
       for (var _k in options) {
-        if (_k !== 'cache' && _k !== 'retry') _opts[_k] = options[_k];
+        if (_k !== 'cache' && _k !== 'retry' && _k !== '_retried') _opts[_k] = options[_k];
       }
       return await fetch(url, _opts);
     } catch (err) {
@@ -131,8 +180,17 @@ async function apiFetch(path, options = {}) {
   }
 
   try {
-    const response = await fetchWithRetry(url, { ...options, headers, body });
+    var response = await fetchWithRetry(url, { ...options, headers, body });
     clearOfflineToast();
+    // access token 过期：尝试 refresh 后重试一次
+    if (response.status === 401 && !options._retried) {
+      const ok = await tryRefresh();
+      if (ok) {
+        const newToken = getToken();
+        if (newToken) headers['Authorization'] = `Bearer ${newToken}`;
+        response = await fetchWithRetry(url, { ...options, headers, body, _retried: true });
+      }
+    }
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       throw new Error(error.detail || `HTTP ${response.status}`);
@@ -248,12 +306,14 @@ function computeDiff(current, previous) {
 export async function register(phone, password, role = 'elderly', name = '') {
   const data = await apiFetch('/auth/register', { method: 'POST', body: { phone, password, role, name } });
   setToken(data.access_token);
+  if (data.refresh_token) setRefreshToken(data.refresh_token);
   return data;
 }
 
 export async function login(phone, password) {
   const data = await apiFetch('/auth/login', { method: 'POST', body: { phone, password } });
   setToken(data.access_token);
+  if (data.refresh_token) setRefreshToken(data.refresh_token);
   return data;
 }
 
@@ -265,7 +325,11 @@ export async function changePassword(oldPassword, newPassword) {
     body: { old_password: oldPassword, new_password: newPassword },
   });
 }
-export function logout() { clearToken(); }
+export async function logout() {
+  // 通知后端吊销 refresh token + 黑名单 access token
+  try { await apiFetch('/auth/logout', { method: 'POST' }); } catch (e) { /* 即使失败也清除本地 */ }
+  clearToken();
+}
 export function isLoggedIn() { return !!getToken(); }
 
 export async function createSession(dayNumber, text, dialect = 'mandarin', audioMetrics = null) {
