@@ -17,7 +17,7 @@ vosk==0.3.45
 
 # 企业级依赖
 psycopg2-binary==2.9.10   # PostgreSQL 驱动
-redis==5.2.0              # 限流/SSE Pub/Sub/token 黑名单
+redis==8.0.1              # 限流/SSE Pub/Sub/token 黑名单
 boto3>=1.35.0             # AWS KMS（可选，仅 kms_provider=aws 时需要）
 
 # 测试与文档
