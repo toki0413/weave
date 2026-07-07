@@ -6,7 +6,7 @@ pydantic-settings==2.14.2
 PyJWT==2.9.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.0
-cryptography>=41.0.0
+cryptography>=49.0.0
 python-multipart==0.0.32
 httpx==0.28.1
 jieba==0.42.1
