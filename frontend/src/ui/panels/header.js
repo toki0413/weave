@@ -5,7 +5,7 @@ import { el } from '../components.js';
 import { render } from '../render.js';
 import { createNotificationBell, refreshNotifications, destroyNotificationBell } from '../notifications.js';
 
-import { renderViewSwitcher, getViewMode, setViewMode } from '../../3d/view-switcher.js';
+import { renderViewSwitcher, getViewMode, setViewMode, exit3DMode } from '../../3d/view-switcher.js';
 
 // 切换视图（老人端 / 家属端 / 医生端）
 function switchView(view) {
@@ -16,7 +16,7 @@ function switchView(view) {
   // 切换到 elderly 时强制 2D 模式
   if (view === 'elderly') {
     localStorage.setItem('viewMode', '2d');
-    import('../../3d/view-switcher.js').then(function(vs) { vs.exit3DMode(); }).catch(function() {});
+    exit3DMode();
   }
   render();
 }

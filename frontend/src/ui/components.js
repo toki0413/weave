@@ -48,5 +48,5 @@ export function switchView(view) {
   document.documentElement.classList.remove('elderly-mode', 'family-mode', 'doctor-mode');
   document.documentElement.classList.add(view + '-mode');
   document.body.className = 'mode-' + view;
-  import('./render.js').then(function(m) { m.render(); });
+  render();
 }

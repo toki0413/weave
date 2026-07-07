@@ -13,6 +13,7 @@ import { createVoiceEditor } from '../voice-editor.js';
 import { withLoading } from '../loading.js';
 import { showToast } from '../toast.js';
 import { trapFocus } from '../interactions.js';
+import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode } from '../../api/client.js';
 
 function getGraphApis() {
   return window.__graphApis || {
@@ -268,23 +269,21 @@ function renderVoiceCard() {
             stopVisualizer();
             if (btn) { btn.textContent = '🎤 录音'; btn.style.background = ''; btn.style.color = ''; }
             // 上传到后端做 STT
-            import('../../api/client.js').then(function(api) {
-              api.uploadAudio(blob).then(function(result) {
-                document.getElementById('voice-input').value = result.text || '';
-                window.__last_voice_result__ = {
-                  text: result.text || '',
-                  confidenceMap: result.confidence_map || result.words || null
-                };
-                if (result.audio_metrics) {
-                  state.lastAudioMetrics = result.audio_metrics;
-                }
-              }).catch(function(err) {
-                console.error('STT upload failed:', err);
-                var msg = err && err.message ? err.message : '语音识别服务暂不可用';
-                alert('语音识别失败：' + msg + '，您可以手动输入文字。');
-                state.sttAvailable = false;
-                render();
-              });
+            uploadAudio(blob).then(function(result) {
+              document.getElementById('voice-input').value = result.text || '';
+              window.__last_voice_result__ = {
+                text: result.text || '',
+                confidenceMap: result.confidence_map || result.words || null
+              };
+              if (result.audio_metrics) {
+                state.lastAudioMetrics = result.audio_metrics;
+              }
+            }).catch(function(err) {
+              console.error('STT upload failed:', err);
+              var msg = err && err.message ? err.message : '语音识别服务暂不可用';
+              alert('语音识别失败：' + msg + '，您可以手动输入文字。');
+              state.sttAvailable = false;
+              render();
             });
           };
           recorder.onError = function(msg) {
@@ -545,92 +544,90 @@ function renderExportSection(panel) {
   }, '重置'));
 
   // 账户与安全（登录用户可用备份恢复；未登录显示登录/注册）
-  import('../../api/client.js').then(function(api) {
-    var backupSection = el('div', { className: 'panel-section' });
-    backupSection.appendChild(el('div', { className: 'panel-title' }, '账户与安全'));
-    if (api.isLoggedIn && api.isLoggedIn()) {
-      var backupGrid = el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } });
-      backupGrid.appendChild(el('button', {
-        className: 'btn-secondary',
-        id: 'export-backup-btn',
-        onclick: function() {
-          var btn = document.getElementById('export-backup-btn');
-          withLoading(btn, function() {
-            return api.exportBackup().catch(function(err) {
-              showToast('导出备份失败：' + (err && err.message ? err.message : '请重试'), 'error');
-              throw err;
-            });
-          }, '导出中…');
-        },
-      }, '导出备份'));
-      var importInput = el('input', { type: 'file', accept: '.json', style: { display: 'none' }, onchange: function(e) {
-        var file = e.target.files[0];
-        if (!file) return;
-        if (!confirm('导入备份将覆盖当前账号下的所有记忆数据、基准线和状态，此操作不可撤销。确定继续吗？')) return;
-        var btn = document.getElementById('import-backup-btn');
+  var backupSection = el('div', { className: 'panel-section' });
+  backupSection.appendChild(el('div', { className: 'panel-title' }, '账户与安全'));
+  if (isLoggedIn()) {
+    var backupGrid = el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } });
+    backupGrid.appendChild(el('button', {
+      className: 'btn-secondary',
+      id: 'export-backup-btn',
+      onclick: function() {
+        var btn = document.getElementById('export-backup-btn');
         withLoading(btn, function() {
-          return api.importBackup(file)
-            .then(function(res) {
-              showToast('导入成功：恢复 ' + (res.imported ? res.imported.sessions : 0) + ' 条记忆，页面即将刷新', 'success');
-              setTimeout(function() { location.reload(); }, 1200);
+          return exportBackup().catch(function(err) {
+            showToast('导出备份失败：' + (err && err.message ? err.message : '请重试'), 'error');
+            throw err;
+          });
+        }, '导出中…');
+      },
+    }, '导出备份'));
+    var importInput = el('input', { type: 'file', accept: '.json', style: { display: 'none' }, onchange: function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      if (!confirm('导入备份将覆盖当前账号下的所有记忆数据、基准线和状态，此操作不可撤销。确定继续吗？')) return;
+      var btn = document.getElementById('import-backup-btn');
+      withLoading(btn, function() {
+        return importBackup(file)
+          .then(function(res) {
+            showToast('导入成功：恢复 ' + (res.imported ? res.imported.sessions : 0) + ' 条记忆，页面即将刷新', 'success');
+            setTimeout(function() { location.reload(); }, 1200);
+          })
+          .catch(function(err) {
+            showToast('导入失败：' + (err && err.message ? err.message : '请重试'), 'error');
+            throw err;
+          });
+      }, '导入中…');
+    }});
+    backupGrid.appendChild(el('button', {
+      className: 'btn-secondary',
+      id: 'import-backup-btn',
+      onclick: function() { importInput.click(); },
+    }, '导入恢复'));
+    backupGrid.appendChild(el('button', {
+      className: 'btn-secondary',
+      id: 'export-logs-btn',
+      onclick: function() {
+        var btn = document.getElementById('export-logs-btn');
+        withLoading(btn, function() {
+          return exportLogs().catch(function(err) {
+            showToast('导出日志失败：' + (err && err.message ? err.message : '请重试'), 'error');
+            throw err;
+          });
+        }, '导出中…');
+      },
+    }, '导出日志'));
+    backupGrid.appendChild(el('button', {
+      className: 'btn-secondary',
+      id: 'recovery-code-btn',
+      onclick: function() {
+        var btn = document.getElementById('recovery-code-btn');
+        withLoading(btn, function() {
+          return getRecoveryCode()
+            .then(function(d) {
+              showToast(d.has_recovery_code
+                ? '已设置恢复码（注册时展示过一次，请妥善保管）'
+                : '当前账户未设置恢复码', 'info', 4000);
             })
             .catch(function(err) {
-              showToast('导入失败：' + (err && err.message ? err.message : '请重试'), 'error');
+              showToast('查询失败：' + (err && err.message ? err.message : '请重试'), 'error');
               throw err;
             });
-        }, '导入中…');
-      }});
-      backupGrid.appendChild(el('button', {
-        className: 'btn-secondary',
-        id: 'import-backup-btn',
-        onclick: function() { importInput.click(); },
-      }, '导入恢复'));
-      backupGrid.appendChild(el('button', {
-        className: 'btn-secondary',
-        id: 'export-logs-btn',
-        onclick: function() {
-          var btn = document.getElementById('export-logs-btn');
-          withLoading(btn, function() {
-            return api.exportLogs().catch(function(err) {
-              showToast('导出日志失败：' + (err && err.message ? err.message : '请重试'), 'error');
-              throw err;
-            });
-          }, '导出中…');
-        },
-      }, '导出日志'));
-      backupGrid.appendChild(el('button', {
-        className: 'btn-secondary',
-        id: 'recovery-code-btn',
-        onclick: function() {
-          var btn = document.getElementById('recovery-code-btn');
-          withLoading(btn, function() {
-            return api.getRecoveryCode()
-              .then(function(d) {
-                showToast(d.has_recovery_code
-                  ? '已设置恢复码（注册时展示过一次，请妥善保管）'
-                  : '当前账户未设置恢复码', 'info', 4000);
-              })
-              .catch(function(err) {
-                showToast('查询失败：' + (err && err.message ? err.message : '请重试'), 'error');
-                throw err;
-              });
-          }, '查询中…');
-        },
-      }, '恢复码状态'));
-      backupSection.appendChild(backupGrid);
-      backupSection.appendChild(importInput);
-    } else {
-      var authBtn = el('button', {
-        className: 'btn-secondary',
-        style: { width: '100%', marginTop: '4px' },
-        onclick: function() {
-          import('../auth-modal.js').then(function(mod) { mod.showAuthModal(); });
-        },
-      }, '登录 / 注册');
-      backupSection.appendChild(authBtn);
-    }
-    panel.appendChild(backupSection);
-  }).catch(function() {});
+        }, '查询中…');
+      },
+    }, '恢复码状态'));
+    backupSection.appendChild(backupGrid);
+    backupSection.appendChild(importInput);
+  } else {
+    var authBtn = el('button', {
+      className: 'btn-secondary',
+      style: { width: '100%', marginTop: '4px' },
+      onclick: function() {
+        import('../auth-modal.js').then(function(mod) { mod.showAuthModal(); });
+      },
+    }, '登录 / 注册');
+    backupSection.appendChild(authBtn);
+  }
+  panel.appendChild(backupSection);
 
   return exportGrid;
 }

@@ -2,6 +2,8 @@
 import './styles.css';
 import { init } from './ui/init.js';
 import { initI18n } from './i18n.js';
+import * as vs from './3d/view-switcher.js';
+import * as api from './api/client.js';
 
 // 初始化国际化
 initI18n().catch(function() {});
@@ -111,49 +113,45 @@ if ('serviceWorker' in navigator) {
 
       // 如果 localStorage 保存了 3D 模式，在完整模式（有 canvas-wrap）下自动加载
       if (localStorage.getItem('viewMode') === '3d') {
-        import('./3d/view-switcher.js').then(function(vs) {
-          import('./state.js').then(function(st) {
-            setTimeout(function() {
-              var canvasWrap = document.getElementById('canvas-wrap');
-              if (canvasWrap && vs.enter3DMode) {
-                vs.enter3DMode(
-                  st.state.nodes || [],
-                  st.state.sessionHistory || []
-                );
-              }
-            }, 300);
-          }).catch(function() {});
+        import('./state.js').then(function(st) {
+          setTimeout(function() {
+            var canvasWrap = document.getElementById('canvas-wrap');
+            if (canvasWrap && vs.enter3DMode) {
+              vs.enter3DMode(
+                st.state.nodes || [],
+                st.state.sessionHistory || []
+              );
+            }
+          }, 300);
         }).catch(function() {});
       }
 
       // 角色路由：根据后端用户角色渲染对应视图
-      import('./api/client.js').then(function(api) {
-        api.getMe().then(function(user) {
-          window.current_user = user;
-          var role = user && user.role ? user.role : '';
-          var app = document.getElementById('app');
-          if (!app) return;
-          if (role === 'elderly') {
-            import('./modes/elderly.js').then(function(mod) {
-              mod.renderElderlyMode(app);
+      api.getMe().then(function(user) {
+        window.current_user = user;
+        var role = user && user.role ? user.role : '';
+        var app = document.getElementById('app');
+        if (!app) return;
+        if (role === 'elderly') {
+          import('./modes/elderly.js').then(function(mod) {
+            mod.renderElderlyMode(app);
+          });
+        } else if (role === 'family') {
+          import('./modes/family.js').then(function(mod) {
+            mod.fetchFamilyData().then(function(data) {
+              mod.renderFamilyMode(app, data);
+            }).catch(function() {
+              mod.renderFamilyMode(app, {});
             });
-          } else if (role === 'family') {
-            import('./modes/family.js').then(function(mod) {
-              mod.fetchFamilyData().then(function(data) {
-                mod.renderFamilyMode(app, data);
-              }).catch(function() {
-                mod.renderFamilyMode(app, {});
-              });
-            });
-          } else if (role === 'doctor') {
-            import('./modes/doctor.js').then(function(mod) {
-              mod.renderDoctorMode(app);
-            });
-          }
-          // 未知角色：保留 init() 渲染的完整模式（向后兼容）
-        }).catch(function() {
-          // 获取用户信息失败，保留完整模式
-        });
+          });
+        } else if (role === 'doctor') {
+          import('./modes/doctor.js').then(function(mod) {
+            mod.renderDoctorMode(app);
+          });
+        }
+        // 未知角色：保留 init() 渲染的完整模式（向后兼容）
+      }).catch(function() {
+        // 获取用户信息失败，保留完整模式
       });
     } catch (e) {
       window.__init_error__ = e.message;

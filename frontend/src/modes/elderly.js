@@ -1,12 +1,13 @@
 // ============ ELDERLY MODE ============
 // 老人端极简模式：只保留核心交互——讲述今日 + 家属留言
 import { el } from '../ui/components.js';
-import { listSessions, uploadAudio, sendWebSocketReadReceipt } from '../api/client.js';
+import { listSessions, uploadAudio, sendWebSocketReadReceipt, isLoggedIn, createSession } from '../api/client.js';
 import { createVoiceEditor } from '../ui/voice-editor.js';
 import { state } from '../state.js';
 import { connect as wsConnect, send as wsSend, isConnected } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 import { cacheMessages, getCachedMessages } from '../db/offline.js';
+import * as vs from '../3d/view-switcher.js';
 
 export function renderElderlyMode(container) {
   container.innerHTML = '';
@@ -16,9 +17,7 @@ export function renderElderlyMode(container) {
 
   // 老人端：明确禁用 3D 模式，确保只显示 2D 界面（简单直观）
   localStorage.setItem('viewMode', '2d');
-  import('../3d/view-switcher.js').then(function(vs) {
-    if (vs.exit3DMode) vs.exit3DMode();
-  }).catch(function() {});
+  if (vs.exit3DMode) vs.exit3DMode();
 
   var app = el('div', {
     className: 'elderly-app',
@@ -265,18 +264,16 @@ function handleRecord() {
     };
     recorder.onStop = function(blob) {
       if (btn) { btn.textContent = '🎤 按住说话'; btn.style.background = ''; btn.style.color = ''; }
-      import('../api/client.js').then(function(api) {
-        api.uploadAudio(blob).then(function(result) {
-          var text = result.text || '';
-          var confidenceMap = result.confidence_map || result.words || null;
-          showVoiceEditor(text, confidenceMap);
-          if (result.audio_metrics) {
-            state.lastAudioMetrics = result.audio_metrics;
-          }
-        }).catch(function(err) {
-          console.error('STT upload failed:', err);
-          alert('语音识别失败，您可以手动输入文字。');
-        });
+      uploadAudio(blob).then(function(result) {
+        var text = result.text || '';
+        var confidenceMap = result.confidence_map || result.words || null;
+        showVoiceEditor(text, confidenceMap);
+        if (result.audio_metrics) {
+          state.lastAudioMetrics = result.audio_metrics;
+        }
+      }).catch(function(err) {
+        console.error('STT upload failed:', err);
+        alert('语音识别失败，您可以手动输入文字。');
       });
     };
     recorder.onError = function() {
@@ -302,11 +299,9 @@ function showVoiceEditor(transcript, confidenceMap) {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
     // 提交到后端（如果有登录）
-    import('../api/client.js').then(function(api) {
-      if (api.isLoggedIn && api.isLoggedIn()) {
-        api.createSession(0, text).catch(function() {});
-      }
-    });
+    if (isLoggedIn()) {
+      createSession(0, text).catch(function() {});
+    }
   };
 
   editor.directButton.onclick = function() {
@@ -314,11 +309,9 @@ function showVoiceEditor(transcript, confidenceMap) {
     container.innerHTML = '';
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
-    import('../api/client.js').then(function(api) {
-      if (api.isLoggedIn && api.isLoggedIn()) {
-        api.createSession(0, text).catch(function() {});
-      }
-    });
+    if (isLoggedIn()) {
+      createSession(0, text).catch(function() {});
+    }
   };
 }
 

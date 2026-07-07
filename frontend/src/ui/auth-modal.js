@@ -5,6 +5,7 @@ import { state } from '../state.js';
 import { render } from './render.js';
 import { withLoading } from './loading.js';
 import { showToast } from './toast.js';
+import { login, register } from '../api/client.js';
 
 import { trapFocus } from './interactions.js';
 
@@ -201,22 +202,20 @@ function _renderForm() {
       }
 
       withLoading(submitBtn, function() {
-        return import('../api/client.js').then(function(api) {
-          var promise = mode === 'login'
-            ? api.login(identifier, password)
-            : api.register(identifier, password, 'elderly', name, phone || undefined);
-          return promise.then(function(data) {
-            if (mode === 'register' && data.recovery_code) {
-              _renderRecoveryCode(data.recovery_code);
-            } else {
-              _close();
-              render();
-              showToast('登录成功', 'success');
-            }
-          }).catch(function(err) {
-            _showError(err.message || '操作失败');
-            throw err;
-          });
+        var promise = mode === 'login'
+          ? login(identifier, password)
+          : register(identifier, password, 'elderly', name, phone || undefined);
+        return promise.then(function(data) {
+          if (mode === 'register' && data.recovery_code) {
+            _renderRecoveryCode(data.recovery_code);
+          } else {
+            _close();
+            render();
+            showToast('登录成功', 'success');
+          }
+        }).catch(function(err) {
+          _showError(err.message || '操作失败');
+          throw err;
         });
       }, '处理中…');
     },

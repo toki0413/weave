@@ -2,6 +2,7 @@
 import { state, zoomPan, STATE_VERSION } from '../state.js';
 import { render, renderCanvas, renderRightPanelOnly } from './render.js';
 import { el } from './components.js';
+import { isLoggedIn, syncState, loadServerState } from '../api/client.js';
 
 import { addNode } from '../graph/model.js';
 
@@ -215,52 +216,48 @@ function saveState() {
     localStorage.setItem('cognitive-garden-state', JSON.stringify(payload));
   } catch (e) {}
   // API sync: if logged in, push to backend (async, non-blocking)
-  import('../api/client.js').then(function(api) {
-    if (api.isLoggedIn && api.isLoggedIn()) {
-      api.syncState({
-        nodes: state.nodes.map(function(n) { return { id: n.id, label: n.label, type: n.type, x: n.x, y: n.y, isAnon: n.isAnon, matchedTo: n.matchedTo, matchConfidence: n.matchConfidence }; }),
-        edges: state.edges,
-        node_id_counter: state.nodeIdCounter,
-        current_day: state.currentDay,
-        day_snapshots: state.daySnapshots,
-        baseline_metrics: state.baselineMetrics,
-        welcome_dismissed: state.welcomeDismissed,
-      }).catch(function(err) { console.warn('State sync failed:', err); });
-    }
-  }).catch(function() {});
+  if (isLoggedIn()) {
+    syncState({
+      nodes: state.nodes.map(function(n) { return { id: n.id, label: n.label, type: n.type, x: n.x, y: n.y, isAnon: n.isAnon, matchedTo: n.matchedTo, matchConfidence: n.matchConfidence }; }),
+      edges: state.edges,
+      node_id_counter: state.nodeIdCounter,
+      current_day: state.currentDay,
+      day_snapshots: state.daySnapshots,
+      baseline_metrics: state.baselineMetrics,
+      welcome_dismissed: state.welcomeDismissed,
+    }).catch(function(err) { console.warn('State sync failed:', err); });
+  }
 }
 
 function loadState() {
   // Try backend first if logged in
-  import('../api/client.js').then(function(api) {
-    if (api.isLoggedIn && api.isLoggedIn()) {
-      api.loadServerState().then(function(payload) {
-        if (payload.nodes && payload.nodes.length > 0) {
-          state.nodes = payload.nodes.map(function(n) {
-            return {
-              id: n.id, label: n.label, type: n.type,
-              x: n.x, y: n.y, vx: 0, vy: 0,
-              radius: n.type === 'self' ? 28 : n.type === 'anon' ? 22 : 20,
-              isAnon: n.isAnon, matchedTo: n.matchedTo || null,
-              matchConfidence: n.matchConfidence || 0, fixed: false,
-            };
-          });
-          state.edges = payload.edges || [];
-          state.nodeIdCounter = payload.node_id_counter || state.nodes.length;
-          state.currentDay = payload.current_day || 0;
-          state.daySnapshots = payload.day_snapshots || {};
-          state.baselineMetrics = payload.baseline_metrics || null;
-          state.welcomeDismissed = payload.welcome_dismissed || false;
-          render();
-          getGraphApis().startAnimation();
-          return;
-        }
-        loadLocalState();
-      }).catch(function() { loadLocalState(); });
-    } else {
+  if (isLoggedIn()) {
+    loadServerState().then(function(payload) {
+      if (payload.nodes && payload.nodes.length > 0) {
+        state.nodes = payload.nodes.map(function(n) {
+          return {
+            id: n.id, label: n.label, type: n.type,
+            x: n.x, y: n.y, vx: 0, vy: 0,
+            radius: n.type === 'self' ? 28 : n.type === 'anon' ? 22 : 20,
+            isAnon: n.isAnon, matchedTo: n.matchedTo || null,
+            matchConfidence: n.matchConfidence || 0, fixed: false,
+          };
+        });
+        state.edges = payload.edges || [];
+        state.nodeIdCounter = payload.node_id_counter || state.nodes.length;
+        state.currentDay = payload.current_day || 0;
+        state.daySnapshots = payload.day_snapshots || {};
+        state.baselineMetrics = payload.baseline_metrics || null;
+        state.welcomeDismissed = payload.welcome_dismissed || false;
+        render();
+        getGraphApis().startAnimation();
+        return;
+      }
       loadLocalState();
-    }
-  }).catch(function() { loadLocalState(); });
+    }).catch(function() { loadLocalState(); });
+  } else {
+    loadLocalState();
+  }
 }
 
 function loadLocalState() {

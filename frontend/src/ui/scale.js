@@ -115,18 +115,6 @@ function buildScaleCard(scale) {
     card.appendChild(el('div', { className: 'scale-card-who' }, scale.who_fills));
   }
 
-  // 到期提醒（异步查询）
-  import('../api/client.js').then(function(api) {
-    api.apiGet('/scale/last-assessment/' + scale.id).then(function(info) {
-      if (info.due) {
-        card.appendChild(el('div', { className: 'scale-card-due' }, '● 到期可评估'));
-      } else {
-        card.appendChild(el('div', { className: 'scale-card-not-due' },
-          '上次评估 ' + info.days_since + ' 天前，建议 ' + info.recommended_interval_days + ' 天后再评'));
-      }
-    }).catch(function() {});
-  });
-
   card.appendChild(el('div', { className: 'scale-card-btn' }, '开始评估 →'));
   return card;
 }

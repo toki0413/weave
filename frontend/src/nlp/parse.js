@@ -5,6 +5,7 @@ import { checkSemanticAnomalies } from './anomaly.js';
 import { state } from '../state.js';
 import { addNode, findNode, getSelfNode, addEdge } from '../graph/model.js';
 import { saveState } from '../ui/interactions.js';
+import { createSession } from '../api/client.js';
 
 // 匿名节点模糊匹配：编辑距离 + 历史频率 + 上下文加权
 function matchAnon(features, contextEnt) {
@@ -66,7 +67,6 @@ async function parseText(text) {
   // 优先使用后端 API（仅在已登录时）
   if (isLoggedIn()) {
     try {
-      var { createSession } = await import('../api/client.js');
       var result = await createSession(state.currentDay + 1, text, 'mandarin', state.lastAudioMetrics);
       state.lastAudioMetrics = null;  // 用过后清空，避免重复用于手动输入
       state.nodes = result.graph.nodes.map(function(n) {
