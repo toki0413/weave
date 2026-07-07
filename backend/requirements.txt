@@ -23,4 +23,4 @@ boto3>=1.35.0             # AWS KMS（可选，仅 kms_provider=aws 时需要）
 # 测试与文档
 hypothesis==6.122.0
 sphinx==9.1.0
-prometheus-client==0.21.0
+prometheus-client==0.25.0
