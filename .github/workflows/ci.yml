@@ -48,6 +48,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # jieba 0.42.1 的 setup.py 依赖 distutils，Python 3.12 已移除
+          pip install setuptools
           pip install -r requirements.txt
           pip install pytest-cov
 
