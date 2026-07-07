@@ -1,0 +1,36 @@
+name: Setup Labels
+
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/setup-labels.yml']
+  workflow_dispatch:
+
+jobs:
+  create-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Create Dependabot labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = [
+              { name: 'dependencies', color: '0366d6', description: 'Pull requests that update a dependency file' },
+              { name: 'python', color: '3572A5', description: 'Python dependency updates' },
+              { name: 'javascript', color: 'f1e05a', description: 'JavaScript/Node dependency updates' },
+            ];
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ...label,
+                });
+                core.info(`Created label: ${label.name}`);
+              } catch (e) {
+                core.info(`Label "${label.name}" already exists: ${e.message}`);
+              }
+            }
