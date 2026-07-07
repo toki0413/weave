@@ -33,3 +33,12 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    # vite 8 / vitest 4 / jsdom 29 依赖 rolldown，要求 Node >=20.19
+    # 当前运行时为 20.11，暂缓 major 升级，等 Node 升级后再启用
+    ignore:
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
