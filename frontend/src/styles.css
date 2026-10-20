@@ -1306,3 +1306,205 @@ button:focus-visible, textarea:focus-visible, input:focus-visible {
   border: none; cursor: pointer; padding: 6px; border-radius: 8px;
 }
 .daily-prompt-speak:hover { background: #dbeafe; }
+/* ============ B-1 适老视觉 token（老人端优先）============
+ * 追加到 frontend/src/styles.css 末尾（晚于 .elderly-mode 与暗色主题块）。
+ * 数值全部由 verify-b-tokens.mjs 从本文件解析后程序验算。
+ *
+ * 基准决策：每模式各自基准 + 倍率。
+ * 老人端 21px（与工信部适老化改造评测细则对首页默认字号的要求同档），
+ * 完整模式与家属端 16px，医生端 15px（信息密度优先，用户为专业人士）。
+ */
+
+/* ---------- 模式基准 ---------- */
+html {
+  font-size: calc(16px * var(--font-scale, 1));
+}
+:root.elderly-mode {
+  font-size: calc(21px * var(--font-scale, 1));
+  --font-scale: 1;
+}
+:root.doctor-mode {
+  font-size: calc(15px * var(--font-scale, 1));
+}
+
+/* ---------- 字号阶梯（老人端 1rem = 21px）----------
+ * 地板 0.9rem = 18.9px，刚过 WCAG 大字门槛 14pt(18.66px)，
+ * 于是阶梯内每一档都只需 4.5:1 的 AAA 大字要求，且不存在低于 18px 的档。
+ */
+:root {
+  --t-caption: 0.9rem;    /* 18.9px  最小档，已达 14pt 大字门槛 */
+  --t-body-sm: 0.95rem;   /* 19.9px */
+  --t-body:    1.05rem;   /* 22.1px  老人端正文默认 */
+  --t-lead:    1.25rem;   /* 26.3px */
+  --t-title:   1.5rem;    /* 31.5px */
+  --t-display: 2.2rem;    /* 46.2px */
+  --lh-tight: 1.5;
+  --lh-body:  1.8;        /* 老年阅读需要更大行距 */
+}
+
+/* 非老人端把阶梯收敛回常规密度，避免同一套 token 在医生端把界面撑爆 */
+:root:not(.elderly-mode) {
+  --t-caption: 0.75rem;
+  --t-body-sm: 0.85rem;
+  --t-body:    1rem;
+  --t-lead:    1.15rem;
+  --t-title:   1.35rem;
+  --t-display: 2rem;
+  --lh-body:  1.65;
+}
+
+/* ---------- 老人端颜色（补全 patch1 漏掉的 token）---------- */
+:root.elderly-mode {
+  --bg:        #FFFFFF;
+  --bg2:       #F2F2F2;
+  --ink:       #000000;
+  --ink2:      #0A0A0A;
+  --muted:     #333333;
+  --rule:      #767676;
+  --rule2:     #5C5C5C;
+  --on-accent: #FFFFFF;
+
+  --accent:    #1A3D1A;   /* 14.30:1 */
+  --accent-d:  #122B12;
+  --accent-l:  #E4EDE4;
+
+  --danger:    #8E4141;   /*  7.04:1 */
+  --danger-l:  #F0DCDC;
+  --warn:      #735307;   /*  7.07:1 */
+  --warn-l:    #F3E7C9;
+  --accent2:   #814B35;   /*  7.02:1 */
+  --accent3:   #325B8A;   /*  7.00:1 */
+  --focus-ring: #122B12;  /* 16.30:1 */
+
+  /* 录音态：旧实现用 #ffebee + #c62828，白字仅 4.61:1，不达 AAA 大字 4.5 的余量也不够 */
+  --rec-bg:     #F0DCDC;
+  --rec-fg:     #FFFFFF;
+  --rec-fill:   #8E4141;  /* 7.04:1 */
+}
+
+/* ---------- 语义类，替代 elderly.js 里的 18 处内联样式 ---------- */
+.elderly-app { line-height: var(--lh-body); color: var(--ink); }
+.e-title    { font-size: var(--t-title);   line-height: var(--lh-tight); font-weight: 700; color: var(--ink); }
+.e-lead     { font-size: var(--t-lead);    line-height: var(--lh-body);  color: var(--ink); }
+.e-body     { font-size: var(--t-body);    line-height: var(--lh-body);  color: var(--ink); }
+.e-body-2   { font-size: var(--t-body-sm); line-height: var(--lh-body);  color: var(--ink2); }
+.e-caption  { font-size: var(--t-caption); line-height: var(--lh-tight); color: var(--muted); }
+.e-display  { font-size: var(--t-display); line-height: 1; font-weight: 800; color: var(--ink); }
+
+.e-btn {
+  min-height: 56px;          /* 超 WCAG 2.5.5 AAA 的 44px，留手指抖动余量 */
+  min-width: 56px;
+  padding: 14px 22px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  font-size: var(--t-body);
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.e-btn--primary { background: var(--accent); color: var(--on-accent); }
+.e-btn--secondary { background: var(--bg2); color: var(--ink); border-color: var(--rule); }
+.e-btn--recording { background: var(--rec-fill); color: var(--rec-fg); }
+
+/* 触控目标最小间距 12px，防误触 */
+.e-stack { display: flex; flex-direction: column; gap: 12px; }
+.e-row   { display: flex; align-items: center; gap: 12px; }
+
+/* SVG 图谱标签：从 render.js 的 setAttribute('font-size') 迁到 CSS，
+   这样它才跟随 root 缩放。见 B 方案文档 §3。 */
+.node-label { font-size: var(--t-body-sm); fill: var(--ink); font-weight: 600; }
+.node-label--self { font-size: var(--t-lead); fill: var(--ink); font-weight: 800; }
+.node-sub { font-size: var(--t-caption); fill: var(--muted); }
+
+/* ---------- 焦点：老人可能接外接键盘或蓝牙遥控器 ---------- */
+:root.elderly-mode :focus-visible {
+  outline: 3px solid var(--focus-ring) !important;
+  outline-offset: 3px !important;
+}
+
+/* ---------- 动效降级 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root.elderly-mode *,
+  :root.elderly-mode *::before,
+  :root.elderly-mode *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* 关停录音脉冲后，用文字与描边补回状态 */
+  :root.elderly-mode .e-btn--recording { border-color: var(--ink); }
+  :root.elderly-mode .e-btn--recording::after {
+    content: "正在录音";
+    font-size: var(--t-caption);
+    margin-left: 10px;
+  }
+}
+
+/* ---------- 系统高对比 ---------- */
+@media (prefers-contrast: more) {
+  :root.elderly-mode {
+    --bg: #FFFFFF; --bg2: #FFFFFF;
+    --ink: #000000; --ink2: #000000; --muted: #1A1A1A;
+    --rule: #000000; --rule2: #000000;
+    --accent: #000000; --danger: #7A1F1F; --warn: #5C4200;
+    --accent2: #6B3A26; --accent3: #1F4570;
+  }
+}
+/* ============ C · SVG 文本字号与节点对比度修复（零 JS 改动）============
+ * 追加到 frontend/src/styles.css 末尾。
+ *
+ * 为什么可以只改 CSS：SVG 的 font-size / fill 是以 presentation attribute
+ * 写的（render.js:447-458），按 CSS Cascade 4，未加 layer 的普通 CSS 声明
+ * 优先级高于任何 presentation attribute。这些 text 节点没有 style="" 内联样式，
+ * 所以一条 CSS 规则就能覆盖，不必动渲染代码。
+ *
+ * 特异度核算：:root.elderly-mode .nodes-group text = (0,4,0)，
+ * 高于 styles.css 里任何可能竞争的单类/元素选择器。
+ *
+ * 数值由 verify-svg-text.mjs 从本文件解析后验算。
+ */
+
+/* ---------- 1. 节点标签字号：跟 root 走 ----------
+ * 原值 12 / 14 是用户单位，不随 root 缩放，老人端主内容字号被钉死。
+ * 12(普通) → 1.05rem ≈ 22.1px，14(self) → 1.25rem ≈ 26.3px，10(副标签) → 0.9rem ≈ 18.9px。
+ */
+:root.elderly-mode .nodes-group text { font-size: 1.05rem; }        /* 兜底 */
+:root.elderly-mode .nodes-group text[font-size="12"] { font-size: 1.05rem; }
+:root.elderly-mode .nodes-group text[font-size="14"] { font-size: 1.25rem; }
+:root.elderly-mode .nodes-group text[font-size="10"] { font-size: 0.9rem; }
+
+/* ---------- 2. 副标签颜色 ----------
+ * 原 #837A6E 画在画布底上只有 3.85（标准）/ 4.22（老人端白底）。
+ */
+:root.elderly-mode .nodes-group text[fill="#837A6E"] { fill: #5C5C5C; }   /* 6.69:1 */
+
+/* ---------- 3. 节点圆填充：走 state.js，不在此处覆盖 ----------
+ * 白字压在 NODE_TYPES（state.js:46）的彩色圆上，标签 22.1/26.3px 属 WCAG 大字，
+ * 门槛 4.5:1；place 4.00 与 anon 3.25 不过，anon 对画布底也仅 2.96（1.4.11）。
+ * 曾在此处写 circle[fill="#B86B4C"] / circle[fill="#B8860B"] 做 CSS 覆盖，已删除：
+ * leftPanel.js:542 的节点色板直接用 NODE_TYPES[type].color 作内联 background，
+ * 不吃 CSS 覆盖，只在这里改会让图例与图不同色，而图例唯一的用途就是让人把
+ * 颜色对上类别。色值已在 state.js 改正（place #AB6447、anon #996F09）。
+ */
+
+/* 匿名节点标签只有一个 "?"，靠颜色区分；补一层描边作非色彩冗余 */
+:root.elderly-mode .graph-node.anon text { paint-order: stroke; stroke: #FFFFFF; stroke-width: 3px; }
+
+/* ---------- 4. 图表内联 SVG 文本（同样钉死在 9–11px）----------
+ * heatmap.js:55 font-size="9"、radar-chart.js:53/66 9 与 11、trend-chart.js:57/100 10。
+ * 用 .canvas-svg 限定，避免波及语音波形等其它 SVG。
+ */
+:root.elderly-mode .canvas-svg svg text,
+:root.elderly-mode svg canvas-svg text,
+:root.elderly-mode .chart-svg text,
+:root.elderly-mode svg [font-size="9"],
+:root.elderly-mode svg [font-size="10"],
+:root.elderly-mode svg [font-size="11"] {
+  font-size: 0.9rem;      /* 18.9px */
+}
+
+/* ---------- 5. 迁移备注（本轮不做）----------
+ * 上述选择器按 font-size 属性值定位，属于"用 CSS 弥补 JS 的硬编码"。
+ * 长期正解仍是 render.js 与三个 chart 文件改用 class + var(--t-*)，
+ * 把属性值从样式职责里摘出去。届时本文件可整段删除。
+ */
