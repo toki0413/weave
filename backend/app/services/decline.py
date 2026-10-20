@@ -13,6 +13,7 @@ from app.services.baseline_personal import (
     check_personal_deviation,
     get_baseline_explanation,
 )
+from app.services.narrative_text import decrypt_narrative, DECRYPT_FAILED
 from app.services.nlp import extract_entities, extract_anon_features, extract_fillers
 
 logger = logging.getLogger("cognitive_garden")
@@ -52,8 +53,13 @@ def _flatten_entities(entities: Dict[str, List[str]]) -> List[str]:
     return out
 
 
-def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
-    """汇总一段时间窗口内的会话统计"""
+def _collect_session_stats(sessions: List[DBSession], user_id: str) -> Dict[str, Any]:
+    """汇总一段时间窗口内的会话统计
+
+    注意：narrative 在库里是密文（session.py:146-156 写入即加密），必须先过
+    decrypt_narrative。历史上这里直接读 s.narrative，于是四个检测器吃的是
+    base64 密文 —— 不报错，只交出近乎恒定的数字。
+    """
     all_entities: List[str] = []
     entity_freq: Dict[str, int] = defaultdict(int)
     total_chars = 0
@@ -65,9 +71,15 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
     event_freq: Dict[str, int] = defaultdict(int)
     per_day_events: List[set] = []
     filler_rates: List[float] = []
+    decrypt_failed = 0
 
     for s in sessions:
-        text = s.narrative or ""
+        nt = decrypt_narrative(s.narrative, user_id, bool(s.is_encrypted))
+        if nt.state == DECRYPT_FAILED:
+            # 不静默退回密文：计入 skipped，由调用方决定是出档还是拒绝出档
+            decrypt_failed += 1
+            continue
+        text = nt.text
         if not text.strip():
             continue
         ents = extract_entities(text)
@@ -94,6 +106,8 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
 
     return {
         "session_count": len(sessions),
+        "usable_count": len(sessions) - decrypt_failed,
+        "decrypt_failed": decrypt_failed,
         "entity_freq": dict(entity_freq),
         "event_freq": dict(event_freq),
         "all_entities": all_entities,
@@ -281,8 +295,39 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
             "message": "近期或历史叙事数据不足，无法计算衰退分数",
         }
 
-    recent_stats = _collect_session_stats(recent_sessions)
-    prev_stats = _collect_session_stats(prev_sessions)
+    recent_stats = _collect_session_stats(recent_sessions, user_id)
+    prev_stats = _collect_session_stats(prev_sessions, user_id)
+
+    # 解不出明文就不出结论：宁可报数据不足，也不交出一堆恒定值
+    if recent_stats["decrypt_failed"] or prev_stats["decrypt_failed"]:
+        logger.warning(
+            "用户 %s 衰退分析跳过 %d 条会话（解密失败）",
+            user_id, recent_stats["decrypt_failed"] + prev_stats["decrypt_failed"],
+        )
+    if (recent_stats["usable_count"] == 0 or prev_stats["usable_count"] == 0):
+        return {
+            "decline_score": 0,
+            "level": "数据不足",
+            "signal_source": "fixed_threshold",
+            "window_days": window_days,
+            "recent_session_count": len(recent_sessions),
+            "previous_session_count": len(prev_sessions),
+            "usable_session_count": {
+                "recent": recent_stats["usable_count"],
+                "previous": prev_stats["usable_count"],
+            },
+            "decrypt_failed": {
+                "recent": recent_stats["decrypt_failed"],
+                "previous": prev_stats["decrypt_failed"],
+            },
+            "forgotten_entities": [],
+            "narrative_simplification": {},
+            "repetition": [],
+            "anonymization_trend": {},
+            "personal_deviation": {"deviated": False, "dimensions": [], "has_baseline": False},
+            "explanation": None,
+            "message": "近期或历史叙事数据不足，无法计算衰退分数",
+        }
 
     forgotten = _detect_forgotten_entities(recent_stats, prev_stats, window_days)
     simplification = _detect_narrative_simplification(recent_stats, prev_stats)
@@ -330,6 +375,14 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
         "window_days": window_days,
         "recent_session_count": len(recent_sessions),
         "previous_session_count": len(prev_sessions),
+        "usable_session_count": {
+            "recent": recent_stats["usable_count"],
+            "previous": prev_stats["usable_count"],
+        },
+        "decrypt_failed": {
+            "recent": recent_stats["decrypt_failed"],
+            "previous": prev_stats["decrypt_failed"],
+        },
         "forgotten_entities": forgotten,
         "narrative_simplification": simplification,
         "repetition": repetition,
@@ -357,9 +410,16 @@ def build_entity_timeline(user_id: str, db: Session, days: int = 30) -> Dict[str
     timeline: List[Dict[str, Any]] = []
     entity_dates: Dict[str, List[str]] = defaultdict(list)
     entity_peak: Dict[str, int] = defaultdict(int)
+    decrypt_failed = 0
 
     for s in sessions:
-        text = s.narrative or ""
+        nt = decrypt_narrative(s.narrative, user_id, bool(s.is_encrypted))
+        if nt.state == DECRYPT_FAILED:
+            decrypt_failed += 1
+            continue
+        text = nt.text
+        if not text.strip():
+            continue
         ents = extract_entities(text)
         flat = _flatten_entities(ents)
         counts: Dict[str, int] = defaultdict(int)
@@ -398,4 +458,6 @@ def build_entity_timeline(user_id: str, db: Session, days: int = 30) -> Dict[str
         "timeline": timeline,
         "disappearing": disappearing,
         "total_entities": len(entity_dates),
+        "session_count": len(sessions),
+        "decrypt_failed": decrypt_failed,
     }
