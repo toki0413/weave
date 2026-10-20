@@ -172,3 +172,23 @@ test('3D 星云色板由 NODE_TYPES 派生，不再手抄', () => {
   assert.ok(/TYPE_COLORS\[n\.type\]\s*\|\|\s*TYPE_COLORS\.item/.test(NEBULA),
     '缺 type 时两端兜底不一致，又会造出新的颜色分歧');
 });
+
+test('视图切换器未选中态不再用半透明白（原有效对比 1.06:1）', () => {
+  // 逐条规则单独取 body：用 [^}]* 跨规则匹配会命中另一条声明，据此断言等于没检查
+  const rules = [...live.matchAll(/\.view-mode-btn([^\{]*)\{([^\}]*)\}/g)]
+    .map(m => ({ sel: m[1].trim(), body: m[2].trim() }));
+  assert.ok(rules.length >= 3, '切换器规则数量异常: ' + rules.length);
+  const inactive = rules.filter(r => r.sel.includes(':not(.active)'));
+  assert.ok(inactive.length >= 2, '未选中态规则少于预期，需复核: ' + inactive.length);
+  for (const r of inactive) {
+    assert.ok(/color:\s*var\(--ink2\)|color:\s*#0A0A0A/.test(r.body),
+      '未选中态仍是半透明白前景: ' + r.body);
+  }
+  assert.ok(!/\.view-mode-btn[^\{]*\{[^\}]*rgba\(255,\s*255,\s*255,\s*0?\.6\)/.test(live),
+    '仍有 rgba(255,255,255,0.6) 作前景');
+  assert.ok(/\.view-switcher-3d\s*\{[^\}]*background:\s*var\(--bg2\)/.test(live),
+    '切换器底仍是半透明黑');
+  const base = rules.find(r => r.sel === '');
+  assert.ok(base && /min-height:\s*44px/.test(base.body), '缺触控尺寸下限');
+  assert.ok(ratio('#3D362E', '#EDE7DA') >= 4.5);
+});

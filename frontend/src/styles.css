@@ -1508,3 +1508,26 @@ html {
  * 长期正解仍是 render.js 与三个 chart 文件改用 class + var(--t-*)，
  * 把属性值从样式职责里摘出去。届时本文件可整段删除。
  */
+
+/* ============ D · 视图切换器对比度（补 patch2 未落盘项）============ */
+/* 3d/view-switcher.js:31,48 未选中按钮 color: rgba(255,255,255,0.6) 叠在
+   :17 的 rgba(0,0,0,0.15) 上，压在 --bg2 #EDE7DA 时有效对比度仅 1.06:1，
+   文字几乎不存在；fontSize 0.8rem 在老人端 root 修复后也只有 16.8px。
+   换成实色底 + token 前景，老人端另给一档更高对比。 */
+.view-switcher-3d {
+  background: var(--bg2);
+}
+.view-mode-btn {
+  min-height: 44px;
+  font-size: 0.9rem;
+}
+.view-mode-btn.active {
+  background: var(--accent-d) !important;
+  color: #FFFFFF !important;
+}
+.view-mode-btn:not(.active) {
+  background: transparent !important;
+  color: var(--ink2) !important;
+}
+:root.elderly-mode .view-mode-btn:not(.active) { color: #0A0A0A !important; }
+:root.elderly-mode .view-mode-btn.active { background: #122B12 !important; }
