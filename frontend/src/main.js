@@ -1,6 +1,7 @@
 // ============ MAIN ENTRY ============
 import './styles.css';
 import { init } from './ui/init.js';
+import { applyMode, rememberRole } from './ui/mode.js';
 import { initI18n } from './i18n.js';
 import * as vs from './3d/view-switcher.js';
 import * as api from './api/client.js';
@@ -8,18 +9,9 @@ import * as api from './api/client.js';
 // 初始化国际化
 initI18n().catch(function() {});
 
-// 初始化字体大小（从 localStorage 读取）
-(function initFontSize() {
-  var saved = localStorage.getItem('fontSize');
-  if (saved) {
-    var scale = parseFloat(saved);
-    if (!isNaN(scale) && scale > 0) {
-      var px = Math.round(scale * 16);
-      document.documentElement.style.setProperty('--font-scale', String(scale));
-      document.documentElement.style.setProperty('--font-size', px + 'px');
-    }
-  }
-})();
+// 字号初始化统一交给 ui/init.js（只写 --font-scale）。
+// 此处原有一份并行实现，且同样把 --font-size 写成 scale*16 的 px —— 两处重复，
+// 且都把"老人端基准应为 20px"这个事实硬编码成了 16。
 
 // 初始化 PWA 安装提示
 import('./pwa/install-prompt.js').then(function(mod) {
@@ -141,6 +133,8 @@ if ('serviceWorker' in navigator) {
       api.getMe().then(function(user) {
         window.current_user = user;
         var role = user && user.role ? user.role : '';
+        rememberRole(role);            // 供下次启动在骨架屏阶段就用对主题
+        applyMode(role);               // 权威覆盖启动时从缓存读到的值
         var app = document.getElementById('app');
         if (!app) return;
         if (role === 'elderly') {
@@ -162,7 +156,12 @@ if ('serviceWorker' in navigator) {
         }
         // 未知角色：保留 init() 渲染的完整模式（向后兼容）
       }).catch(function() {
-        // 获取用户信息失败，保留完整模式
+        // 获取用户信息失败 → 真正的完整模式（不加任何模式类）。
+        // 注意：旧代码这里注释写"保留完整模式"，但当时 init.js 已经无条件挂上
+        // elderly-mode，那条注释从未成立。现在显式归零，不沿用上次缓存的角色：
+        // 宁可让界面回到中性完整模式，也不替一个身份不明的会话猜角色。
+        // 若希望老人在断网时也保住大字号高对比，删掉本行即可（会沿用 recallRole 结果）。
+        applyMode('');
       });
     } catch (e) {
       window.__init_error__ = e.message;
