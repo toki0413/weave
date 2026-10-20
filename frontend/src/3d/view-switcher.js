@@ -3,8 +3,15 @@
 
 import { state } from '../state.js';
 import { el } from '../ui/components.js';
+import { getViewMode as storedViewMode, setViewMode as storeViewMode,
+         migrateLegacyOnce } from '../ui/viewModeStore.js';
+// 注意：本模块内 currentMode 这个标识符已被 2D/3D 的 getter 占用
+// （见下方 export function currentMode 与 _currentMode），故给模式名换个别名。
+import { currentMode as appMode } from '../ui/mode.js';
 
-var _currentMode = localStorage.getItem('viewMode') || '2d';
+// 偏好按模式分片存储，老人端不支持 3D 故恒为 '2d'。见 ui/viewModeStore.js。
+migrateLegacyOnce();
+var _currentMode = storedViewMode() || '2d';
 var _nebulaController = null;
 var _onNodeClick = null;
 
@@ -82,7 +89,7 @@ export function setViewMode(mode, options) {
   options = options || {};
   if (_currentMode === mode) return;
   _currentMode = mode;
-  localStorage.setItem('viewMode', mode);
+  storeViewMode(appMode(), mode);
 
   // Update any existing switcher UI
   var switchers = document.querySelectorAll('.view-switcher-3d');

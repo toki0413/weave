@@ -1,7 +1,8 @@
 // ============ MAIN ENTRY ============
 import './styles.css';
 import { init } from './ui/init.js';
-import { applyMode, rememberRole } from './ui/mode.js';
+import { applyMode, rememberRole, recallRole } from './ui/mode.js';
+import { prefers3D } from './ui/viewModeStore.js';
 import { initI18n } from './i18n.js';
 import * as vs from './3d/view-switcher.js';
 import * as api from './api/client.js';
@@ -114,19 +115,22 @@ if ('serviceWorker' in navigator) {
         }
       });
 
-      // 如果 localStorage 保存了 3D 模式，在完整模式（有 canvas-wrap）下自动加载
-      if (localStorage.getItem('viewMode') === '3d') {
-        import('./state.js').then(function(st) {
-          setTimeout(function() {
+      // 若该模式的持久偏好是 3D，在完整模式（有 canvas-wrap）下自动恢复。
+      // 按模式判定：老人端不支持 3D，prefers3D 对其恒为 false，因此这里不再
+      // 依赖 elderly.js 事后覆写共享键来纠偏。
+      if (vs.enter3DMode && prefers3D(recallRole())) {
+        restore3D();
+      }
+
+      function restore3D() {
+        import('./state.js').then(function (st) {
+          setTimeout(function () {
             var canvasWrap = document.getElementById('canvas-wrap');
-            if (canvasWrap && vs.enter3DMode) {
-              vs.enter3DMode(
-                st.state.nodes || [],
-                st.state.sessionHistory || []
-              );
+            if (canvasWrap) {
+              vs.enter3DMode(st.state.nodes || [], st.state.sessionHistory || []);
             }
           }, 300);
-        }).catch(function() {});
+        }).catch(function () {});
       }
 
       // 角色路由：根据后端用户角色渲染对应视图
@@ -135,6 +139,9 @@ if ('serviceWorker' in navigator) {
         var role = user && user.role ? user.role : '';
         rememberRole(role);            // 供下次启动在骨架屏阶段就用对主题
         applyMode(role);               // 权威覆盖启动时从缓存读到的值
+        // 缓存此前可能为空（首访），拿到权威角色后再判一次，
+        // 避免家属首访拿不到自己设过的 3D 偏好。老人端恒 false，不受影响。
+        if (prefers3D(role) && !vs.is3DActive()) restore3D();
         var app = document.getElementById('app');
         if (!app) return;
         if (role === 'elderly') {

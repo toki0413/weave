@@ -15,8 +15,11 @@ export function renderElderlyMode(container) {
   document.documentElement.classList.add('elderly-mode');
   document.body.className = 'mode-elderly';
 
-  // 老人端：明确禁用 3D 模式，确保只显示 2D 界面（简单直观）
-  localStorage.setItem('viewMode', '2d');
+  // 老人端不支持 3D：只退出当前 3D 视图，不再写共享的 viewMode。
+  // 旧实现这里 setItem('viewMode','2d') 有两个问题：一是静默清掉家属在同一
+  // 设备上存的 3D 偏好；二是它其实在掩盖 main.js 的启动恢复行为（那里在
+  // getMe() 之前就用 setTimeout 读旧的全局键进 3D），而不是在防护。
+  // 现在由 main.js 侧按模式判定，老人端永远拿不到 '3d'。
   if (vs.exit3DMode) vs.exit3DMode();
 
   var app = el('div', {
