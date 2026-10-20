@@ -4,18 +4,21 @@
 而是由 KMS 统一管理：密码只用于身份认证，不再承担加密职责。
 
 支持三种 provider：
-- local: 进程内随机密钥，仅开发用（重启后已加密数据无法解密）
+- file:  持久化到用户目录的随机密钥（单机默认，重启后数据仍可解密）
 - env:   从环境变量 CG_KMS_MASTER_KEY 读取的对称密钥（适合单机部署）
 - aws:   AWS KMS，使用 envelope encryption（生产推荐）
+- local: 进程内随机密钥，仅开发用（重启后已加密数据无法解密）
 
 选型建议：
-  开发/测试 → local
+  开发/测试 → file（默认）
   单机生产  → env（配合强随机密钥 + OS 密钥管理）
   云上生产  → aws
 """
 import base64
 import logging
+import os
 import secrets
+from pathlib import Path
 from typing import Optional, Tuple
 
 from app.config import get_settings
@@ -118,6 +121,45 @@ class AWSKMS(KMSProvider):
 _provider: Optional[KMSProvider] = None
 
 
+class FileKMS(KMSProvider):
+    """文件 KMS：进程内随机生成包装密钥，持久化到用户目录（0o600）。
+
+    与 local 的区别：重启后密钥仍在，已加密数据可继续解密——单机默认选项。
+    与 env 的区别：无需手工配置环境变量；密钥与数据同机存放，防护等级
+    等同于磁盘安全级别，多机/生产环境仍应使用 env 或 aws。
+    """
+
+    def __init__(self):
+        key_file = Path.home() / ".cognitive-garden" / "kms_wrap_key.bin"
+        try:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            if key_file.exists():
+                self._key = key_file.read_bytes()
+                if len(self._key) != 32:
+                    raise ValueError("kms_wrap_key.bin 长度异常，需删除后重新生成")
+            else:
+                self._key = secrets.token_bytes(32)
+                key_file.write_bytes(self._key)
+            try:
+                os.chmod(key_file, 0o600)
+            except OSError:
+                pass
+            logger.info("FileKMS 启用：包装密钥已持久化到 %s", key_file)
+        except OSError as e:
+            # 无可写目录时退化为进程内密钥，行为等同 local
+            logger.warning("FileKMS 无法持久化密钥（%s），退化为 local 行为", e)
+            self._key = secrets.token_bytes(32)
+
+    def generate_data_key(self) -> Tuple[bytes, str]:
+        plaintext = generate_master_key()
+        encrypted = encrypt(base64.b64encode(plaintext).decode("ascii"), self._key)
+        return plaintext, encrypted
+
+    def decrypt_data_key(self, encrypted_b64: str) -> bytes:
+        plaintext_b64 = decrypt(encrypted_b64, self._key)
+        return base64.b64decode(plaintext_b64)
+
+
 def init_kms() -> KMSProvider:
     """根据配置初始化 KMS provider 单例"""
     global _provider
@@ -125,7 +167,7 @@ def init_kms() -> KMSProvider:
         return _provider
 
     settings = get_settings()
-    provider = (settings.kms_provider or "local").lower()
+    provider = (settings.kms_provider or "file").lower()
 
     if provider == "aws":
         _provider = AWSKMS(settings.kms_key_id, settings.kms_aws_region)
@@ -133,10 +175,12 @@ def init_kms() -> KMSProvider:
         if not settings.kms_master_key:
             raise ValueError("env KMS 模式需要配置 CG_KMS_MASTER_KEY")
         _provider = EnvKMS(settings.kms_master_key)
+    elif provider == "file":
+        _provider = FileKMS()
     elif provider == "local":
         _provider = LocalKMS()
     else:
-        raise ValueError(f"未知 KMS provider: {provider}（可选: local/env/aws）")
+        raise ValueError(f"未知 KMS provider: {provider}（可选: file/local/env/aws）")
 
     return _provider
 

@@ -205,8 +205,9 @@ def check_personal_deviation(
     )
 
     if not baseline_row or not baseline_row.personal_mean or not baseline_row.personal_std:
-        return {"deviated": False, "dimensions": []}
+        return {"deviated": False, "dimensions": [], "has_baseline": False}
 
+    has_baseline = True
     mean_map: Dict[str, float] = baseline_row.personal_mean
     std_map: Dict[str, float] = baseline_row.personal_std
 
@@ -250,7 +251,7 @@ def check_personal_deviation(
     # 按 |z_score| 降序排列
     dimensions.sort(key=lambda d: abs(d["z_score"]), reverse=True)
 
-    return {"deviated": deviated, "dimensions": dimensions}
+    return {"deviated": deviated, "dimensions": dimensions, "has_baseline": has_baseline}
 
 
 def get_baseline_explanation(deviation_result: Dict[str, Any]) -> Optional[str]:

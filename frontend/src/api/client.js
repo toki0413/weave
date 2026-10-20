@@ -245,6 +245,51 @@ window.addEventListener('online', function() {
 
 export { apiCache };
 
+// ========== 零方数据埋点 ==========
+// 事件先入 localStorage 队列，2s 防抖批量上报；全程静默失败，埋点绝不干扰主流程。
+// 只上报事件名 + 轻量属性，禁止叙事文本/健康数据（隐私红线与后端一致）。
+const TRACK_QUEUE_KEY = 'cg_track_queue';
+let _trackTimer = null;
+
+function _loadTrackQueue() {
+  try { return JSON.parse(localStorage.getItem(TRACK_QUEUE_KEY) || '[]'); } catch (e) { return []; }
+}
+function _saveTrackQueue(events) {
+  try { localStorage.setItem(TRACK_QUEUE_KEY, JSON.stringify(events.slice(-100))); } catch (e) {}
+}
+
+export function trackEvent(name, properties = {}) {
+  try {
+    var queue = _loadTrackQueue();
+    queue.push({ name: name, properties: properties, client_ts: new Date().toISOString() });
+    _saveTrackQueue(queue);
+  } catch (e) { return; }
+  if (_trackTimer) clearTimeout(_trackTimer);
+  _trackTimer = setTimeout(flushTrackEvents, 2000);
+}
+
+export async function flushTrackEvents() {
+  if (_trackTimer) { clearTimeout(_trackTimer); _trackTimer = null; }
+  var queue = _loadTrackQueue();
+  if (!queue.length) return;
+  if (!navigator.onLine) return; // 离线时留在本地队列，恢复网络后重试
+  _saveTrackQueue([]); // 先清空再上报，失败回滚，避免重复
+  try {
+    await apiFetch('/metrics/events', { method: 'POST', body: { events: queue } });
+  } catch (e) {
+    _saveTrackQueue(queue.concat(_loadTrackQueue()));
+  }
+}
+
+// 页面切到后台时冲刷队列（含 token 的 fetch 走 apiFetch，不用 sendBeacon）
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') flushTrackEvents();
+});
+
+// 会话来源归因：一次性标记，下一次 createSession 附带后自动清除
+let _sessionSource = null;
+export function markSessionSource(source) { _sessionSource = source; }
+
 function computeDiff(current, previous) {
   var diff = { added: [], removed: [], modified: [] };
   if (!previous) {
@@ -337,7 +382,13 @@ export function isLoggedIn() { return !!getToken(); }
 export async function createSession(dayNumber, text, dialect = 'mandarin', audioMetrics = null) {
   const body = { day_number: dayNumber, narrative_input: { text, dialect } };
   if (audioMetrics) body.audio_metrics = audioMetrics;
-  return apiFetch('/session/', { method: 'POST', body });
+  if (_sessionSource) body.source = _sessionSource;
+  const result = await apiFetch('/session/', { method: 'POST', body });
+  if (_sessionSource) {
+    trackEvent('daily_prompt_submitted', { source: _sessionSource });
+    _sessionSource = null; // 一次性归因，用后即清
+  }
+  return result;
 }
 
 export async function listSessions(limit = 30) { return apiFetch(`/session/?limit=${limit}`, { cache: true }); }
@@ -540,7 +591,23 @@ export async function llmQA(question, userId) {
 // ========== 家属端通知 ==========
 export async function getNotifications(unread = false) {
   const query = unread ? '?unread=true' : '';
+  trackEvent('alerts_viewed', { unread: unread });
   return apiFetch(`/notification/${query}`, { cache: true });
+}
+
+// 60 秒日课：当日语音引导话题（多模态契约：voice/text/haptic）
+export async function getDailyPrompt() {
+  return apiFetch('/training/daily-prompt', { cache: true });
+}
+
+// 告警闭环回填：status = handled / helpful / not_helpful / false_alarm
+export async function resolveNotification(id, status, note) {
+  return apiFetch(`/notification/${id}/resolve`, { method: 'PUT', body: { status, note } });
+}
+
+// 照护视图：告警处理汇总
+export async function getNotificationSummary() {
+  return apiFetch('/notification/summary', { cache: true });
 }
 
 export async function markNotificationRead(id) {

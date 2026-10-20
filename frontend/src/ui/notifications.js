@@ -6,7 +6,10 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   getUnreadCount,
+  resolveNotification,
+  invalidateCache,
 } from '../api/client.js';
+import { showToast } from './toast.js';
 
 // 通知类型对应的图标
 var TYPE_ICON = {
@@ -21,6 +24,24 @@ var SEVERITY_CLASS = {
   warning: 'notif-warning',
   danger: 'notif-danger',
 };
+
+// 告警闭环回填（2026-10）：家属对告警的处理结果，false_alarm 触发同类信号降频
+var RESOLVE_OPTIONS = [
+  { status: 'handled', label: '已处理' },
+  { status: 'helpful', label: '有帮助' },
+  { status: 'not_helpful', label: '没帮助' },
+  { status: 'false_alarm', label: '误报' },
+];
+var RESOLVE_LABEL = {
+  handled: '已反馈：已处理',
+  helpful: '已反馈：有帮助',
+  not_helpful: '已反馈：没帮助',
+  false_alarm: '已反馈：误报（同类告警将暂缓推送）',
+};
+// 只有告警类通知需要回填，量表提醒等不需要
+function needsResolution(n) {
+  return n.type === 'anomaly' || n.type === 'decline';
+}
 
 // 面板状态，避免全局污染
 var panel = {
@@ -238,7 +259,53 @@ function buildItem(n, dropdown) {
   body.appendChild(el('div', { className: 'notif-item-time' }, formatTime(n.created_at)));
   item.appendChild(body);
 
+  // 告警闭环回填 UI：pending 显示四个反馈按钮，已回填显示状态标签
+  if (needsResolution(n)) {
+    item.appendChild(buildResolveRow(n, item));
+  }
+
   return item;
+}
+
+// 构建回填操作行（按钮点击不冒泡，避免触发已读逻辑）
+function buildResolveRow(n, item) {
+  var status = n.resolution_status || 'pending';
+  var row = el('div', { className: 'notif-resolve-row' });
+
+  if (status !== 'pending') {
+    row.classList.add('resolved');
+    row.appendChild(el('span', { className: 'notif-resolved-label' }, RESOLVE_LABEL[status] || '已反馈'));
+    return row;
+  }
+
+  RESOLVE_OPTIONS.forEach(function(opt) {
+    row.appendChild(el('button', {
+      className: 'notif-resolve-btn' + (opt.status === 'false_alarm' ? ' false-alarm' : ''),
+      onclick: function(e) {
+        e.stopPropagation();
+        submitResolution(n, item, opt.status, row);
+      },
+    }, opt.label));
+  });
+  return row;
+}
+
+function submitResolution(n, item, status, row) {
+  // 乐观更新：先锁按钮防连点，失败再恢复
+  row.querySelectorAll('.notif-resolve-btn').forEach(function(b) { b.disabled = true; });
+  resolveNotification(n.id, status).then(function(res) {
+    n.resolution_status = status;
+    row.innerHTML = '';
+    row.classList.add('resolved');
+    row.appendChild(el('span', { className: 'notif-resolved-label' }, RESOLVE_LABEL[status] || '已反馈'));
+    invalidateCache('/notification/');
+    if (res && res.signal_suppressed) {
+      showToast('已记录，同类告警将暂缓推送 30 天');
+    }
+  }).catch(function(err) {
+    row.querySelectorAll('.notif-resolve-btn').forEach(function(b) { b.disabled = false; });
+    showToast('回填失败：' + (err.offline ? '无法连接服务器' : err.message));
+  });
 }
 
 // 导出给外部主动刷新用（比如切到家属端时）

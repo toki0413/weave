@@ -25,26 +25,42 @@ def compute_metrics_from_graph(graph: Dict[str, Any]) -> Dict[str, Any]:
         adj[fid].append(tid)
         adj[tid].append(fid)
 
-    # 连通度
-    visited = set()
-    max_comp = 0
-    for nd in nodes:
-        if nd["id"] in visited:
-            continue
-        stack = [nd["id"]]
-        size = 0
-        while stack:
-            nid = stack.pop()
-            if nid in visited:
+    # SELF 之外的实体子图：SELF 与所有实体的连边是系统注入的（提及即连边），
+    # 若计入连通度/路径统计，任何叙事都会产生以 SELF 为中心的星形图，
+    # 连通度恒为 1，失去区分度。拓扑信号只统计实体-实体关系。
+    core_nodes = [nd for nd in nodes if nd.get("type") != "self"]
+    core_id_set = {nd["id"] for nd in core_nodes}
+    adj_core: Dict[int, List[int]] = {nd["id"]: [] for nd in core_nodes}
+    for ed in edges:
+        fid, tid = ed["from"], ed["to"]
+        if fid in core_id_set and tid in core_id_set:
+            adj_core[fid].append(tid)
+            adj_core[tid].append(fid)
+    k = len(core_nodes)
+
+    # 连通度（实体子图）
+    if k == 0:
+        connectivity = 1.0  # 退化为仅 SELF：保持旧口径，交由内容分/趋势分表达空叙事
+    else:
+        visited = set()
+        max_comp = 0
+        for nd in core_nodes:
+            if nd["id"] in visited:
                 continue
-            visited.add(nid)
-            size += 1
-            for neighbor in adj.get(nid, []):
-                if neighbor not in visited:
-                    stack.append(neighbor)
-        if size > max_comp:
-            max_comp = size
-    connectivity = max_comp / n
+            stack = [nd["id"]]
+            size = 0
+            while stack:
+                nid = stack.pop()
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                size += 1
+                for neighbor in adj_core.get(nid, []):
+                    if neighbor not in visited:
+                        stack.append(neighbor)
+            if size > max_comp:
+                max_comp = size
+        connectivity = max_comp / k
 
     # 度数
     degrees = [len(adj.get(nd["id"], [])) for nd in nodes]
@@ -84,30 +100,30 @@ def compute_metrics_from_graph(graph: Dict[str, Any]) -> Dict[str, Any]:
     # 密度
     density = (2 * e) / (n * (n - 1)) if n > 1 else 0
 
-    # 最短路径（BFS 全源）
+    # 最短路径（BFS 全源，实体子图）
     sum_dist = 0
     dist_count = 0
     eff_sum = 0.0
-    for src in nodes:
-        dist = {nd["id"]: float("inf") for nd in nodes}
+    for src in core_nodes:
+        dist = {nd["id"]: float("inf") for nd in core_nodes}
         dist[src["id"]] = 0
         queue = [src["id"]]
         qi = 0
         while qi < len(queue):
             u = queue[qi]
             qi += 1
-            for v in adj.get(u, []):
+            for v in adj_core.get(u, []):
                 if dist[v] == float("inf"):
                     dist[v] = dist[u] + 1
                     queue.append(v)
-        for nd in nodes:
+        for nd in core_nodes:
             d = dist[nd["id"]]
             if d != float("inf") and d > 0:
                 sum_dist += d
                 dist_count += 1
                 eff_sum += 1.0 / d
     avg_path_len = sum_dist / dist_count if dist_count > 0 else 0
-    global_eff = eff_sum / (n * (n - 1)) if n > 1 else 0
+    global_eff = eff_sum / (k * (k - 1)) if k > 1 else 0
 
     # 小世界系数
     rand_cc = avg_deg / n if avg_deg > 1 else 0

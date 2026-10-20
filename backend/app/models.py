@@ -55,6 +55,8 @@ class Session(Base):
     # 情感分析结果
     emotion_score = Column(Float, nullable=True)  # 浮点数 -1 ~ 1
     emotion_label = Column(String(20), nullable=True)  # positive / neutral / negative
+    # 记录来源归因（2026-10 日课漏斗）：daily_prompt / manual / share / import
+    source = Column(String(32), nullable=True)
     created_at = Column(DateTime, default=_utc_now)
     
     user = relationship("User", back_populates="sessions")
@@ -181,6 +183,10 @@ class Notification(Base):
     severity = Column(String(20), default="info")  # info / warning / danger
     related_data = Column(JSON)
     is_read = Column(Boolean, default=False)
+    # 闭环回填（2026-10）：家属对告警的处理结果，false_alarm 触发信号降频
+    resolution_status = Column(String(20), default="pending")  # pending / handled / helpful / not_helpful / false_alarm
+    resolution_note = Column(Text, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utc_now)
 
     user = relationship("User")
@@ -245,6 +251,24 @@ class TrainingRecord(Base):
     game_type = Column(String(50), nullable=False)  # memory_challenge / number_link
     score = Column(Integer, nullable=False)
     completed_at = Column(DateTime, default=_utc_now)
+
+    user = relationship("User")
+
+
+class AnalyticsEvent(Base):
+    """产品分析事件（2026-10 工程债修复：此前零埋点）
+
+    用于研究漏斗：日课曝光→填入→提交、告警曝光→回填。
+    隐私约束：只存事件名+轻量属性，绝不存叙事文本或健康数据。
+    """
+    __tablename__ = "analytics_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
+    event_name = Column(String(64), nullable=False, index=True)  # 如 daily_prompt_exposed
+    properties = Column(JSON, nullable=True)  # 轻量属性（≤1KB），不含 PII
+    client_ts = Column(DateTime, nullable=True)  # 客户端时间（可空，服务端时间为准）
+    created_at = Column(DateTime, default=_utc_now, index=True)
 
     user = relationship("User")
 

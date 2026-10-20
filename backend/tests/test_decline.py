@@ -278,3 +278,100 @@ def test_timeline_empty(client, auth_headers):
     assert data["timeline"] == []
     assert data["disappearing"] == []
     assert data["total_entities"] == 0
+
+
+# ============ 信号源判定（2026-10：个人基线优先，MyndYou 模式） ============
+
+def test_signal_source_fixed_threshold_when_no_baseline(db_session):
+    """无个人基线（冷启动）→ fixed_threshold"""
+    user = _make_user(db_session)
+    _make_session(db_session, user.id, "今天在公园散步", days_ago=8)
+    _make_session(db_session, user.id, "今天在公园散步，碰见老张", days_ago=1)
+    result = analyze_narrative_diff(user.id, db_session, window_days=7)
+    assert result["signal_source"] == "fixed_threshold"
+
+
+def test_signal_source_personal_baseline_primary(db_session):
+    """有个人基线 → personal_baseline 为主信号，分数由偏离维度导出"""
+    from app.services.baseline_personal import build_personal_baseline
+
+    user = _make_user(db_session, phone="13900000901")
+    # 历史 5 条（前窗口）：指标恒定 connectivity=0.9 / clustering=0.8
+    for i, d in enumerate([8, 9, 9, 10, 10]):
+        s = DBSession(
+            user_id=user.id,
+            day_number=i + 1,
+            narrative=f"第{i + 1}天，今天在公园散步，和老张聊天",
+            graph={"nodes": [], "edges": []},
+            metrics={"connectivity": 0.9, "clustering": 0.8},
+            health_score=80,
+            anomalies=[],
+            created_at=datetime.now(timezone.utc) - timedelta(days=d),
+        )
+        db_session.add(s)
+    db_session.commit()
+
+    baseline = build_personal_baseline(user.id, db_session)
+    assert baseline is not None
+
+    # 近期 1 条：connectivity 剧烈偏离（std=0 → danger）
+    recent = DBSession(
+        user_id=user.id,
+        day_number=6,
+        narrative="今天没出门，自己待着",
+        graph={"nodes": [], "edges": []},
+        metrics={"connectivity": 0.2, "clustering": 0.8},
+        health_score=60,
+        anomalies=[],
+        created_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    db_session.add(recent)
+    db_session.commit()
+
+    result = analyze_narrative_diff(user.id, db_session, window_days=7)
+    assert result["signal_source"] == "personal_baseline"
+    assert result["personal_deviation"]["deviated"] is True
+    danger = sum(1 for d in result["personal_deviation"]["dimensions"] if d["severity"] == "danger")
+    warning = sum(1 for d in result["personal_deviation"]["dimensions"] if d["severity"] == "warning")
+    expected_score = min(100, danger * 25 + warning * 10)
+    assert result["decline_score"] == expected_score
+    assert expected_score > 0
+
+
+def test_personal_baseline_no_deviation_keeps_normal(db_session):
+    """有基线但无偏离 → personal_baseline 信号源、分数 0、级别正常"""
+    from app.services.baseline_personal import build_personal_baseline
+
+    user = _make_user(db_session, phone="13900000902")
+    for i, d in enumerate([8, 9, 9, 10, 10]):
+        s = DBSession(
+            user_id=user.id,
+            day_number=i + 1,
+            narrative=f"第{i + 1}天，今天在公园散步",
+            graph={"nodes": [], "edges": []},
+            metrics={"connectivity": 0.9, "clustering": 0.8},
+            health_score=80,
+            anomalies=[],
+            created_at=datetime.now(timezone.utc) - timedelta(days=d),
+        )
+        db_session.add(s)
+    db_session.commit()
+    build_personal_baseline(user.id, db_session)
+
+    recent = DBSession(
+        user_id=user.id,
+        day_number=6,
+        narrative="今天在公园散步，心情不错",
+        graph={"nodes": [], "edges": []},
+        metrics={"connectivity": 0.9, "clustering": 0.8},
+        health_score=80,
+        anomalies=[],
+        created_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    db_session.add(recent)
+    db_session.commit()
+
+    result = analyze_narrative_diff(user.id, db_session, window_days=7)
+    assert result["signal_source"] == "personal_baseline"
+    assert result["decline_score"] == 0
+    assert result["level"] == "正常"

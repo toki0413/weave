@@ -13,7 +13,7 @@ from typing import List
 from app.database import get_db
 from app.models import VoiceMessage, User, FamilyLink
 from app.routers.auth import get_current_user
-from app.services.e2ee import encrypt_for_recipient
+from app.services.e2ee import encrypt_family_message, add_recipient_wrap
 from app.services import key_manager
 from app.middleware.permission import filter_by_permission
 from app.schemas import VoiceMessageCreate, VoiceMessageOut
@@ -64,14 +64,15 @@ def create_voice_message(
     if len(audio_bytes) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="音频文件过大，限制 50MB")
 
-    # 端到端加密：用发送方主密钥 + 接收方 ID 派生共享密钥
+    # v2 加密：每消息独立内容密钥；发送方包装 + server_wrap（接收方拉取时补写）。
+    # 安全定性：服务端中转加密（见 e2ee.py 模块文档），非端到端。
     try:
         master_key = key_manager.get_user_key(current_user.id)
     except RuntimeError:
         raise HTTPException(status_code=401, detail="加密密钥不可用，请重新登录")
 
-    encrypted = encrypt_for_recipient(payload.audio_base64, master_key, payload.receiver_id)
-    encrypted_json = json.dumps(encrypted)
+    envelope = encrypt_family_message(payload.audio_base64, current_user.id, master_key)
+    encrypted_json = json.dumps(envelope, ensure_ascii=False)
     encrypted_bytes = encrypted_json.encode("utf-8")
 
     # 保存加密后的音频数据到文件系统
@@ -92,8 +93,8 @@ def create_voice_message(
     db.commit()
     db.refresh(db_msg)
 
-    # 返回时附带密文，前端可直接解密
-    db_msg.encrypted_payload = encrypted
+    # 返回时附带密文信封
+    db_msg.encrypted_payload = envelope
     return db_msg
 
 
@@ -103,20 +104,43 @@ def list_voice_messages(
     current_user: User = Depends(get_current_user),
     limit: int = 50,
 ):
-    """获取当前用户收到或发送的语音留言列表，按时间倒序"""
+    """获取当前用户收到或发送的语音留言列表，按时间倒序。
+
+    v2 信封：当前用户首次读取时用其自身 master_key 补写 key_wrap 并持久化
+    （幂等），之后解密不再依赖服务端可解。
+    """
     from app.middleware.permission import filter_by_permission
     query = db.query(VoiceMessage)
     query = filter_by_permission(query, current_user, db)
     messages = query.order_by(VoiceMessage.created_at.desc()).limit(limit).all()
 
-    # 为每条消息读取加密 payload
+    my_key: bytes = b""
+    try:
+        my_key = key_manager.get_user_key(current_user.id)
+    except RuntimeError:
+        my_key = b""
+
     for msg in messages:
         if msg.audio_url and msg.audio_url.endswith(".enc.json"):
             try:
                 enc_path = UPLOAD_DIR / msg.audio_url.replace("/uploads/", "")
                 if enc_path.exists():
                     with open(enc_path, "r", encoding="utf-8") as f:
-                        msg.encrypted_payload = json.load(f)
+                        envelope = json.load(f)
+                    if (
+                        isinstance(envelope, dict)
+                        and envelope.get("v") == 2
+                        and my_key
+                        and current_user.id not in (envelope.get("key_wraps") or {})
+                    ):
+                        try:
+                            envelope = add_recipient_wrap(envelope, current_user.id, my_key)
+                            enc_path.write_text(
+                                json.dumps(envelope, ensure_ascii=False), encoding="utf-8"
+                            )
+                        except Exception:
+                            pass
+                    msg.encrypted_payload = envelope
             except Exception:
                 msg.encrypted_payload = None
         else:

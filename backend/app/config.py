@@ -48,10 +48,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7              # refresh token 7 天
 
     # KMS — 主密钥包装密钥的托管方式
-    # local: 本地随机密钥（开发用，不安全）
+    # file:  持久化到用户目录（单机默认，重启后数据仍可解密）
     # env:   从环境变量 CG_KMS_MASTER_KEY 读取
     # aws:   AWS KMS（需配置 CG_KMS_KEY_ID + AWS 凭证）
-    kms_provider: str = "local"
+    # local: 进程内随机密钥（不安全，重启后已加密数据无法解密）
+    kms_provider: str = "file"
     kms_master_key: str = ""        # local/env 模式下使用
     kms_key_id: str = ""            # aws 模式下的 KMS key ID
     kms_aws_region: str = ""        # aws 区域
@@ -59,6 +60,8 @@ class Settings(BaseSettings):
     # ASR (离线优先，Vosk 为默认引擎)
     asr_provider: str = "vosk"  # vosk | whisper | none
     asr_model_path: str = ""
+    # Google 在线降级：境内网络不可达，默认关闭；部署方显式开启后才走在线降级
+    stt_online_fallback: bool = False
 
     # LLM (可选，仅在用户配置时启用)
     llm_provider: str = ""  # 留空表示不使用 LLM

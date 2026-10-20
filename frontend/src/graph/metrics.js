@@ -16,21 +16,42 @@ export function computeMetrics() {
     adj[ed.to].push(ed.from);
   });
 
-  // Connectivity
-  var visited = {}, components = 0, maxComp = 0;
-  nodes.forEach(function(nd) {
-    if (visited[nd.id]) return;
-    components++;
-    var stack = [nd.id], size = 0;
-    while (stack.length) {
-      var id = stack.pop();
-      if (visited[id]) continue;
-      visited[id] = true; size++;
-      (adj[id] || []).forEach(function(nid) { if (!visited[nid]) stack.push(nid); });
+  // SELF 之外的子图：SELF 与所有实体的连边是系统注入的（提及即连边），
+  // 若计入连通度/路径统计，任何叙事都会产生以 SELF 为中心的星形图，
+  // 连通度恒为 1，失去区分度。拓扑信号只统计实体-实体关系。
+  var coreNodes = nodes.filter(function(nd) { return nd.type !== 'self'; });
+  var coreIds = {};
+  coreNodes.forEach(function(nd) { coreIds[nd.id] = true; });
+  var adjCore = {};
+  coreNodes.forEach(function(nd) { adjCore[nd.id] = []; });
+  edges.forEach(function(ed) {
+    if (coreIds[ed.from] && coreIds[ed.to]) {
+      adjCore[ed.from].push(ed.to);
+      adjCore[ed.to].push(ed.from);
     }
-    if (size > maxComp) maxComp = size;
   });
-  var connectivity = maxComp / n;
+
+  // Connectivity（实体子图）
+  var k = coreNodes.length;
+  var connectivity;
+  if (k === 0) {
+    connectivity = 1; // 退化为仅 SELF：保持旧口径，交由内容分/趋势分表达空叙事
+  } else {
+    var visitedC = {}, componentsC = 0, maxCompC = 0;
+    coreNodes.forEach(function(nd) {
+      if (visitedC[nd.id]) return;
+      componentsC++;
+      var stack = [nd.id], size = 0;
+      while (stack.length) {
+        var id = stack.pop();
+        if (visitedC[id]) continue;
+        visitedC[id] = true; size++;
+        (adjCore[id] || []).forEach(function(nid) { if (!visitedC[nid]) stack.push(nid); });
+      }
+      if (size > maxCompC) maxCompC = size;
+    });
+    connectivity = maxCompC / k;
+  }
 
   // Degrees
   var degrees = nodes.map(function(nd) { return (adj[nd.id] || []).length; });
@@ -68,20 +89,20 @@ export function computeMetrics() {
   // Density
   var density = n > 1 ? (2 * e) / (n * (n - 1)) : 0;
 
-  // Shortest paths (BFS from each node)
+  // Shortest paths (BFS from each node, entity subgraph only)
   var sumDist = 0, distCount = 0, effSum = 0;
-  nodes.forEach(function(src) {
+  coreNodes.forEach(function(src) {
     var d = {};
-    nodes.forEach(function(nd) { d[nd.id] = Infinity; });
+    coreNodes.forEach(function(nd) { d[nd.id] = Infinity; });
     d[src.id] = 0;
     var q = [src.id], qi = 0;
     while (qi < q.length) {
       var u = q[qi++];
-      (adj[u] || []).forEach(function(v) {
+      (adjCore[u] || []).forEach(function(v) {
         if (d[v] === Infinity) { d[v] = d[u] + 1; q.push(v); }
       });
     }
-    nodes.forEach(function(nd) {
+    coreNodes.forEach(function(nd) {
       if (d[nd.id] !== Infinity && d[nd.id] > 0) {
         sumDist += d[nd.id]; distCount++;
         effSum += 1 / d[nd.id];
@@ -89,7 +110,7 @@ export function computeMetrics() {
     });
   });
   var avgPathLen = distCount > 0 ? sumDist / distCount : 0;
-  var globalEff = n > 1 ? effSum / (n * (n - 1)) : 0;
+  var globalEff = k > 1 ? effSum / (k * (k - 1)) : 0;
 
   // Small-world
   var randCC = avgDeg > 1 ? avgDeg / n : 0;

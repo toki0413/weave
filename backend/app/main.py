@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.database import engine, Base, get_db
-from app.routers import auth, session, graph, baseline, stt, state_sync, backup, scale, lexicon, decline, notification, voice_message, family_sync, share, training, llm, websocket, sync
+from app.routers import auth, session, graph, baseline, stt, state_sync, backup, scale, lexicon, decline, notification, voice_message, family_sync, share, training, llm, websocket, sync, metrics
 from app.config import get_settings
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
@@ -234,6 +234,7 @@ v1_app.include_router(voice_message.router)
 v1_app.include_router(family_sync.router)
 v1_app.include_router(share.router)
 v1_app.include_router(training.router)
+v1_app.include_router(metrics.router)
 v1_app.include_router(llm.router)
 v1_app.include_router(websocket.router)
 v1_app.include_router(sync.router)

@@ -12,6 +12,9 @@ _DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",  # 需走兼容端点
     "deepseek": "https://api.deepseek.com/v1",
+    # 豆包大模型（火山方舟）：OpenAI 兼容端点，model 填方舟 Model ID
+    # （如 doubao-seed-1-8-251228 / doubao-1-5-pro-32k），密钥用 ARK_API_KEY
+    "doubao": "https://ark.cn-beijing.volces.com/api/v3",
 }
 
 

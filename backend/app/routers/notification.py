@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models import Notification, FamilyLink, User
@@ -38,9 +38,26 @@ class NotificationOut(BaseModel):
     severity: str
     related_data: Optional[dict] = None
     is_read: bool
+    resolution_status: Optional[str] = "pending"
+    resolution_note: Optional[str] = None
+    resolved_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationResolve(BaseModel):
+    """告警处理回填：闭环「告警 → 家属处理 → 结果 → 基线修正」"""
+    status: str = Field(..., description="handled / helpful / not_helpful / false_alarm")
+    note: Optional[str] = Field(None, max_length=500, description="处理说明（可选）")
+
+
+class NotificationSummary(BaseModel):
+    total: int
+    pending: int
+    handled: int
+    false_alarm: int
+    by_severity: dict
 
 
 # ========== 通知相关 ==========
@@ -107,6 +124,67 @@ def mark_all_read(
         n.is_read = True
     db.commit()
     return {"detail": "已全部标记已读", "updated": len(rows)}
+
+
+_VALID_RESOLUTIONS = {"handled", "helpful", "not_helpful", "false_alarm"}
+
+
+@router.put("/{notification_id}/resolve")
+def resolve_notification(
+    notification_id: str,
+    payload: NotificationResolve,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """回填告警处理结果（闭环第三步）。
+
+    false_alarm 会通知服务层对该 signal_key 降频 30 天（基线修正 v1）。
+    """
+    if payload.status not in _VALID_RESOLUTIONS:
+        raise HTTPException(status_code=400, detail=f"status 必须是 {'/'.join(sorted(_VALID_RESOLUTIONS))}")
+    n = (
+        db.query(Notification)
+        .filter(Notification.id == notification_id, Notification.user_id == current_user.id)
+        .first()
+    )
+    if not n:
+        raise HTTPException(status_code=404, detail="通知不存在")
+    n.resolution_status = payload.status
+    n.resolution_note = payload.note
+    n.resolved_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "detail": "已回填处理结果",
+        "id": notification_id,
+        "resolution_status": n.resolution_status,
+        # 前端据此提示「同类告警将暂缓推送」
+        "signal_suppressed": payload.status == "false_alarm" and bool((n.related_data or {}).get("signal_key")),
+    }
+
+
+@router.get("/summary", response_model=NotificationSummary)
+def notification_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """照护视图：按处理状态与严重度聚合当前用户的告警"""
+    rows = db.query(Notification).filter(Notification.user_id == current_user.id).all()
+    by_severity: dict = {"info": 0, "warning": 0, "danger": 0}
+    pending = handled = false_alarm = 0
+    for n in rows:
+        sev = n.severity if n.severity in by_severity else "info"
+        by_severity[sev] += 1
+        status = n.resolution_status or "pending"
+        if status == "pending":
+            pending += 1
+        elif status == "false_alarm":
+            false_alarm += 1
+        else:
+            handled += 1
+    return NotificationSummary(
+        total=len(rows), pending=pending, handled=handled,
+        false_alarm=false_alarm, by_severity=by_severity,
+    )
 
 
 # ========== 家属-老人绑定 ==========

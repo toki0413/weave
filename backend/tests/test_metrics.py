@@ -85,6 +85,50 @@ def test_self_node_centrality():
     assert abs(m["centrality"] - 2 / 3) < 1e-6
 
 
+def test_self_hub_does_not_inflate_connectivity():
+    """SELF 与所有实体连边时，连通度应基于实体子图而非全图。
+
+    回归测试（2026-10）：修复前 SELF 星形注入使 connectivity 恒为 1，
+    结构分中的连通度维度（权重 0.35）失去区分度。
+    三个互不相连的实体仅通过 SELF 相连：实体子图连通度应为 1/3。
+    """
+    graph = {
+        "nodes": [
+            {"id": 1, "label": "我", "type": "self"},
+            {"id": 2, "label": "A", "type": "person"},
+            {"id": 3, "label": "B", "type": "place"},
+            {"id": 4, "label": "C", "type": "event"},
+        ],
+        "edges": [
+            {"from": 1, "to": 2, "type": "emotion"},
+            {"from": 1, "to": 3, "type": "space"},
+            {"from": 1, "to": 4, "type": "time"},
+        ],
+    }
+    m = compute_metrics_from_graph(graph)
+    assert abs(m["connectivity"] - 1 / 3) < 1e-6
+
+
+def test_entity_subgraph_connectivity_counts_direct_edges():
+    """实体之间有直接连边时计入连通度：A-B 直连 + C 孤立 → 2/3"""
+    graph = {
+        "nodes": [
+            {"id": 1, "label": "我", "type": "self"},
+            {"id": 2, "label": "A", "type": "person"},
+            {"id": 3, "label": "B", "type": "place"},
+            {"id": 4, "label": "C", "type": "event"},
+        ],
+        "edges": [
+            {"from": 1, "to": 2, "type": "emotion"},
+            {"from": 1, "to": 3, "type": "space"},
+            {"from": 1, "to": 4, "type": "time"},
+            {"from": 2, "to": 3, "type": "space"},
+        ],
+    }
+    m = compute_metrics_from_graph(graph)
+    assert abs(m["connectivity"] - 2 / 3) < 1e-6
+
+
 def test_anon_count():
     """isAnon 或 type=anon 的节点应计入 anonCount"""
     graph = {

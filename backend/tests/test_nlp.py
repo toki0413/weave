@@ -69,12 +69,51 @@ def test_parse_time_normal():
     assert len(time_anomalies) == 0
 
 
+def test_time_anomaly_no_cross_sentence_false_positive():
+    """回归测试（2026-10）：跨句时间词不应触发误报。
+
+    修复前在全文范围搜集时间词，"早上买菜，晚上看电视"会同时给两个事件
+    报时间不匹配；修复后只检查事件所在小句内的时间词。
+    """
+    text = "早上买菜，晚上看电视"
+    result = parse_narrative(text)
+    time_anomalies = [a for a in result["anomalies"] if a["type"] == "event-time-mismatch"]
+    assert len(time_anomalies) == 0
+
+
+def test_time_anomaly_still_fires_same_clause():
+    """同小句内的真实异常仍应报警：凌晨看电视"""
+    text = "凌晨看电视"
+    result = parse_narrative(text)
+    time_anomalies = [a for a in result["anomalies"] if a["type"] == "event-time-mismatch"]
+    assert len(time_anomalies) >= 1
+    assert "凌晨" in time_anomalies[0]["unexpected_times"]
+
+
 def test_parse_anon_features():
     """匿名节点特征提取：那个...的"""
     text = "那个穿红衣服的"
     features = extract_anon_features(text)
     assert len(features) > 0
     assert any("红衣服" in f for f in features)
+
+
+def test_parse_anon_short_reference():
+    """回归测试（2026-10）：高危短指代（专名提取困难信号）应被捕获"""
+    text = "然后那个谁陪我去了医院"
+    features = extract_anon_features(text)
+    assert "那个谁" in features
+
+
+def test_parse_fillers_measurement():
+    """填充词密度测量（只测量不参与打分）"""
+    from app.services.nlp import extract_fillers
+    text = "呃，今天早上去了那个公园，呃，散步"
+    fillers = extract_fillers(text)
+    assert fillers["count"] >= 2
+    assert fillers["per_100"] > 0
+    empty = extract_fillers("今天去公园散步")
+    assert empty["count"] == 0
 
 
 def test_parse_relation_he_companion():

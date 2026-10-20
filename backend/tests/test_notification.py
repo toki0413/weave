@@ -372,11 +372,18 @@ def test_mark_all_read_flow(client, db_session):
         json={"elderly_username": "13900000027"},
     )
 
-    elderly = db_session.query(User).filter(User.phone == "13900000027").first()
-    # 写 3 条通知
+    family = db_session.query(User).filter(User.phone == "13900000028").first()
+    # 直接写 3 条通知（绕过告警频控——本测试只验证批量已读）
     for i in range(3):
-        anomalies = [{"event": f"事件{i}", "severity": "warning"}]
-        create_anomaly_notification(elderly.id, anomalies, db_session)
+        db_session.add(Notification(
+            user_id=family.id,
+            type="anomaly",
+            title=f"测试通知{i}",
+            content="内容",
+            severity="warning",
+            is_read=False,
+        ))
+    db_session.commit()
 
     # 确认 3 条未读
     r = client.get("/api/v1/notification/unread-count", headers=fam_headers)
@@ -491,3 +498,119 @@ def test_notification_isolated_between_users(client, db_session):
     # 家属B没有通知
     r = client.get("/api/v1/notification/", headers=fam_b_headers)
     assert r.json() == []
+
+
+# ============ 告警动作化 + 频控 + 闭环回填（2026-10） ============
+
+def _make_family_pair(db, phone_base):
+    """创建老人+家属+绑定，返回 (elderly, family)"""
+    import uuid as _uuid
+    elderly = User(id=str(_uuid.uuid4()), username=f"{phone_base}", hashed_password="x", role="elderly")
+    family = User(id=str(_uuid.uuid4()), username=f"{phone_base}f", hashed_password="x", role="family")
+    link = FamilyLink(elderly_user_id=elderly.id, family_user_id=family.id)
+    db.add_all([elderly, family, link])
+    db.commit()
+    return elderly, family
+
+
+def test_anomaly_notification_carries_actions(db_session):
+    """告警必须附带可执行动作（DeCaAI 教训：无动作的告警=噪声）"""
+    from app.services.notification_service import create_anomaly_notification
+    elderly, family = _make_family_pair(db_session, "13900000501")
+    anomalies = [{"event": "看病", "severity": "warning", "type": "event-place-mismatch"}]
+    count = create_anomaly_notification(elderly.id, anomalies, db_session)
+    assert count == 1
+    notif = db_session.query(Notification).filter(Notification.user_id == family.id).first()
+    assert notif.related_data.get("actions")
+    assert "建议" in (notif.content or "")
+
+
+def test_anomaly_notification_throttled_same_signal(db_session):
+    """同一 signal_key 在冷却期内不重发"""
+    from app.services.notification_service import create_anomaly_notification
+    elderly, family = _make_family_pair(db_session, "13900000502")
+    anomalies = [{"event": "打太极", "severity": "warning", "type": "event-place-mismatch"}]
+    assert create_anomaly_notification(elderly.id, anomalies, db_session) == 1
+    # 同组信号（冷却期内）→ 0
+    assert create_anomaly_notification(elderly.id, anomalies, db_session) == 0
+
+
+def test_daily_alert_cap(db_session):
+    """每家属每日同类告警上限：第 3 条起拦截"""
+    from app.services.notification_service import create_anomaly_notification
+    elderly, family = _make_family_pair(db_session, "13900000503")
+    for ev in ["打太极", "买菜", "看病"]:
+        anomalies = [{"event": ev, "severity": "warning", "type": "event-place-mismatch"}]
+        create_anomaly_notification(elderly.id, anomalies, db_session)
+    total = db_session.query(Notification).filter(Notification.user_id == family.id).count()
+    assert total == 2  # 上限 2 条/天
+
+
+def test_false_alarm_extends_cooldown(db_session):
+    """闭环回填：标记误报后，同类信号冷却期从 3 天延长到 30 天"""
+    from datetime import datetime, timedelta, timezone
+    from app.services.notification_service import create_anomaly_notification
+    elderly, family = _make_family_pair(db_session, "13900000504")
+    anomalies = [{"event": "打太极", "severity": "warning", "type": "event-place-mismatch"}]
+
+    # 第一次发送，并把时间回拨 10 天（超出 3 天冷却期）
+    assert create_anomaly_notification(elderly.id, anomalies, db_session) == 1
+    notif = db_session.query(Notification).filter(Notification.user_id == family.id).first()
+    notif.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+    db_session.commit()
+    # 超出冷却期 → 可以重发
+    assert create_anomaly_notification(elderly.id, anomalies, db_session) == 1
+
+    # 标记误报并再次回拨 10 天 → 30 天冷却期内 → 拦截
+    for n in db_session.query(Notification).filter(Notification.user_id == family.id).all():
+        n.resolution_status = "false_alarm"
+        n.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+    db_session.commit()
+    assert create_anomaly_notification(elderly.id, anomalies, db_session) == 0
+
+
+def test_resolve_endpoint_flow(client, db_session):
+    """回填接口：合法状态落库、非法状态 400、summary 聚合正确"""
+    from app.services.notification_service import create_anomaly_notification
+    _register_user(client, "13900000505", role="elderly", name="老人")
+    _, fam_headers = _register_user(client, "13900000506", role="family", name="家属")
+    r = client.post(
+        "/api/v1/notification/family-link",
+        headers=fam_headers,
+        json={"elderly_username": "13900000505", "relation": "子女"},
+    )
+    assert r.status_code == 200
+
+    elderly = db_session.query(User).filter(User.phone == "13900000505").first()
+    create_anomaly_notification(
+        elderly.id,
+        [{"event": "打太极", "severity": "warning", "type": "event-place-mismatch"}],
+        db_session,
+    )
+    notif = db_session.query(Notification).filter(Notification.type == "anomaly").first()
+
+    # 非法状态
+    r = client.put(
+        f"/api/v1/notification/{notif.id}/resolve",
+        headers=fam_headers, json={"status": "bogus"},
+    )
+    assert r.status_code == 400
+
+    # 合法回填
+    r = client.put(
+        f"/api/v1/notification/{notif.id}/resolve",
+        headers=fam_headers, json={"status": "false_alarm", "note": "记混了，实际去了"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["resolution_status"] == "false_alarm"
+    assert body["signal_suppressed"] is True
+
+    # summary 聚合
+    r = client.get("/api/v1/notification/summary", headers=fam_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["false_alarm"] == 1
+    assert data["pending"] == 0
+    assert data["by_severity"]["warning"] == 1

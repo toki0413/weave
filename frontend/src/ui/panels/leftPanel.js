@@ -13,7 +13,7 @@ import { createVoiceEditor } from '../voice-editor.js';
 import { withLoading } from '../loading.js';
 import { showToast } from '../toast.js';
 import { trapFocus } from '../interactions.js';
-import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode } from '../../api/client.js';
+import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode, getDailyPrompt, trackEvent, markSessionSource } from '../../api/client.js';
 
 function getGraphApis() {
   return window.__graphApis || {
@@ -141,9 +141,66 @@ function openTrainingModal() {
   });
 }
 
-// 语音输入卡片：textarea + 录音按钮 + 解析按钮 + 示例 + NLP结果
+// 语音输入卡片：日课话题条 + textarea + 录音按钮 + 解析按钮 + 示例 + NLP结果
 function renderVoiceCard() {
   var card = el('div', { className: 'voice-card' });
+
+  // 60 秒日课题目条（适老化：大字、语音可朗读、点击即填入，降低记录门槛）
+  var dailyBanner = el('div', {
+    className: 'daily-prompt-banner hidden',
+    id: 'daily-prompt-banner',
+    role: 'button',
+    tabindex: '0',
+    'aria-label': '今日话题，点击填入输入框',
+    title: '点击填入今日话题',
+    onclick: function() {
+      var q = this.getAttribute('data-question');
+      var ta = document.getElementById('voice-input');
+      if (q && ta && !ta.value.trim()) {
+        ta.value = q + ' ';
+        ta.focus();
+        // 漏斗第二环：话题被填入输入框；来源归因随下一次 createSession 上报
+        markSessionSource('daily_prompt');
+        trackEvent('daily_prompt_filled', {});
+      }
+    },
+    onkeydown: function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.click();
+      }
+    },
+  });
+  card.appendChild(dailyBanner);
+  // 异步拉取，失败静默（离线/未登录时无日课条，不阻塞主流程）
+  getDailyPrompt().then(function(p) {
+    if (!p || !p.question) return;
+    dailyBanner.setAttribute('data-question', p.question);
+    dailyBanner.innerHTML =
+      '<span class="daily-prompt-tag">今日话题 · ' + (p.duration_hint || '60秒') + '</span>' +
+      '<span class="daily-prompt-text"></span>' +
+      (p.tts_text ? '<button class="daily-prompt-speak" aria-label="朗读今日话题">🔊</button>' : '');
+    dailyBanner.querySelector('.daily-prompt-text').textContent =
+      p.personalized_hint || p.question;
+    var speakBtn = dailyBanner.querySelector('.daily-prompt-speak');
+    if (speakBtn) {
+      // 多模态反馈：语音通道朗读话题（复用浏览器 TTS，失败无感）
+      speakBtn.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        try {
+          var u = new SpeechSynthesisUtterance(p.tts_text || p.question);
+          u.lang = 'zh-CN';
+          u.rate = 0.9;
+          speechSynthesis.cancel();
+          speechSynthesis.speak(u);
+        } catch (e) { /* TTS 不可用时静默 */ }
+      });
+    }
+    dailyBanner.classList.remove('hidden');
+    // 漏斗第一环：话题曝光（去重：每次页面加载至多计一次）
+    trackEvent('daily_prompt_exposed', {});
+  }).catch(function() { /* 未登录或离线：隐藏日课条 */ });
+
   var textarea = el('textarea', {
     className: 'voice-textarea',
     placeholder: '说出今天发生的事…例如：今天在公园碰见老张，我们一起打太极',

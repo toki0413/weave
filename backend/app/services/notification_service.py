@@ -14,6 +14,108 @@ logger = logging.getLogger("cognitive_garden")
 # 量表到期提醒周期：每季度一次
 _SCALE_REMINDER_INTERVAL_DAYS = 90
 
+# ---- 告警频控与动作化（2026-10，DeCaAI 阴性结果教训：告警疲劳即弃用）----
+# 同一信号 key 的冷却期（天）与家属端每日告警上限
+_SIGNAL_COOLDOWN_DAYS = 3
+_DAILY_ALERT_CAP = 2
+# 被标记"误报"后的加长冷却期（闭环回填：误报信号自动降频）
+_FALSE_ALARM_COOLDOWN_DAYS = 30
+
+# 每类信号对应的家属可执行动作（每条告警必须附带"下一步做什么"）
+_SIGNAL_ACTIONS: Dict[str, List[str]] = {
+    "entity_forgotten": [
+        "翻看与 TA 相关的老照片或视频，温和地聊起这个人，不要考问",
+        "下次复诊时把「最近较少提到 TA」告诉医生",
+    ],
+    "repetition": [
+        "留意是否在重复问同一件事，记录发生的时间段",
+        "带 TA 做一次该事件的「共同经历确认」，减少记忆固着带来的焦虑",
+    ],
+    "simplification": [
+        "陪 TA 聊具体细节（何时、何地、和谁），鼓励每天多说一句",
+        "检查听力/牙齿等影响表达意愿的生理因素",
+    ],
+    "anonymization": [
+        "在 TA 用「那个谁」指代时，自然地帮 TA 补出名字，不要纠错",
+    ],
+    "anomaly": [
+        "在 TA 提到这件事时自然确认是否记混；同月内多次出现再带去就诊",
+    ],
+    "emotion_negative": [
+        "安排一次面对面的陪伴或视频通话",
+        "连续一周消极时考虑寻求专业心理支持",
+    ],
+    "baseline_deviation": [
+        "本周多安排一次共同活动，观察记录是否持续偏离",
+        "保存本条告警，复诊时给医生看趋势而非单次数据",
+    ],
+}
+
+
+def _actions_for(signal_key: str) -> List[str]:
+    """按信号 key 前缀匹配家属动作建议"""
+    for prefix, actions in _SIGNAL_ACTIONS.items():
+        if signal_key.startswith(prefix):
+            return actions
+    return _SIGNAL_ACTIONS["anomaly"]
+
+
+def _should_throttle(
+    db: Session,
+    family_user_id: str,
+    type_: str,
+    signal_key: str,
+) -> bool:
+    """告警频控：同一 signal_key 冷却期内不重发；误报标记后冷却期加长；
+    高打扰类型（anomaly/decline）每家属每日上限 _DAILY_ALERT_CAP 条。
+
+    返回 True 表示应跳过本次发送。
+    """
+    if type_ not in ("anomaly", "decline", "emotion_alert"):
+        return False
+
+    now = datetime.now(timezone.utc)
+
+    # 每日上限
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_count = (
+        db.query(Notification)
+        .filter(
+            Notification.user_id == family_user_id,
+            Notification.type == type_,
+            Notification.created_at >= day_start,
+        )
+        .count()
+    )
+    if today_count >= _DAILY_ALERT_CAP:
+        return True
+
+    # 信号级冷却
+    recent = (
+        db.query(Notification)
+        .filter(
+            Notification.user_id == family_user_id,
+            Notification.type == type_,
+        )
+        .order_by(Notification.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    for n in recent:
+        data = n.related_data or {}
+        if data.get("signal_key") != signal_key:
+            continue
+        created = _ensure_utc(n.created_at)
+        if not created:
+            continue
+        cooldown = _SIGNAL_COOLDOWN_DAYS
+        if (n.resolution_status or "pending") == "false_alarm":
+            # 闭环回填：家属标记误报的信号降频
+            cooldown = _FALSE_ALARM_COOLDOWN_DAYS
+        if now - created < timedelta(days=cooldown):
+            return True
+    return False
+
 
 def _get_family_members_of(db: Session, elderly_user_id: str) -> List[FamilyLink]:
     """查出绑定这位老人的所有家属"""
@@ -44,26 +146,46 @@ def _create_for_family(
     content: str,
     severity: str,
     related_data: Optional[Dict[str, Any]] = None,
+    signal_key: Optional[str] = None,
+    actions: Optional[List[str]] = None,
 ):
-    """给老人绑定的所有家属批量写入一条通知，返回写入条数"""
+    """给老人绑定的所有家属批量写入一条通知，返回写入条数。
+
+    带 signal_key 的高打扰类型（anomaly/decline/emotion_alert）逐家属做
+    频控：冷却期内或超每日上限的家属跳过；每条通知附带可执行动作。
+    """
     links = _get_family_members_of(db, elderly_user_id)
     if not links:
         # 没绑定家属，静默跳过；不算异常
         return 0
 
+    related_data = related_data or {}
+    if signal_key:
+        related_data["signal_key"] = signal_key
+    if actions is None and signal_key:
+        actions = _actions_for(signal_key)
+    if actions:
+        related_data["actions"] = actions
+        content = content + "\n建议：" + "；".join(actions[:2])
+
+    written = 0
     for link in links:
+        if signal_key and _should_throttle(db, link.family_user_id, type_, signal_key):
+            continue
         n = Notification(
             user_id=link.family_user_id,
             type=type_,
             title=title,
             content=content,
             severity=severity,
-            related_data=related_data or {},
+            related_data=related_data,
             is_read=False,
         )
         db.add(n)
-    db.commit()
-    return len(links)
+        written += 1
+    if written:
+        db.commit()
+    return written
 
 
 def create_anomaly_notification(
@@ -109,7 +231,14 @@ def create_anomaly_notification(
     if session_id:
         related["session_id"] = session_id
 
-    return _create_for_family(db, elderly_user_id, "anomaly", title, content, severity, related)
+    # 信号 key：同组异常（按事件名排序）视为同一信号，做冷却频控
+    event_names = sorted({a.get("event") or a.get("type") or "" for a in anomalies})
+    signal_key = "anomaly|" + ",".join(event_names)[:120]
+
+    return _create_for_family(
+        db, elderly_user_id, "anomaly", title, content, severity, related,
+        signal_key=signal_key,
+    )
 
 
 def create_decline_notification(
@@ -142,6 +271,9 @@ def create_decline_notification(
     repetition = decline_data.get("repetition", []) or []
 
     parts = [f"近 {decline_data.get('window_days', 7)} 天衰退分数 {score}（{level}）"]
+    signal_source = decline_data.get("signal_source", "fixed_threshold")
+    if signal_source == "personal_baseline":
+        parts.append("判定依据：相对 TA 自己的历史基线偏离（非群体固定阈值）")
     if forgotten:
         names = [f.get("entity", "") for f in forgotten[:3]]
         parts.append(f"遗忘实体：{', '.join(names)}" + (f" 等 {len(forgotten)} 个" if len(forgotten) > 3 else ""))
@@ -154,14 +286,29 @@ def create_decline_notification(
         parts.append(f"重复叙述 {len(repetition)} 处")
     content = "\n".join(parts)
 
+    # 主信号维度决定动作建议与信号 key
+    if forgotten:
+        primary_signal = "entity_forgotten"
+    elif repetition:
+        primary_signal = "repetition"
+    elif (simplification.get("sentence_len_drop", 0) > 0 or simplification.get("entity_density_drop", 0) > 0):
+        primary_signal = "simplification"
+    else:
+        primary_signal = "baseline_deviation"
+    signal_key = f"decline|{primary_signal}|{level}"
+
     related = {
         "elderly_user_id": elderly_user_id,
         "decline_score": score,
         "level": level,
         "window_days": decline_data.get("window_days", 7),
+        "signal_source": signal_source,
     }
 
-    return _create_for_family(db, elderly_user_id, "decline", title, content, severity, related)
+    return _create_for_family(
+        db, elderly_user_id, "decline", title, content, severity, related,
+        signal_key=signal_key,
+    )
 
 
 def _ensure_utc(dt):

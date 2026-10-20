@@ -157,6 +157,8 @@ def create_session(
         temporal_references=temporal_refs if temporal_refs else None,
         emotion_score=nlp_result["emotion"]["score"],
         emotion_label=nlp_result["emotion"]["overall"],
+        # 来源归因（日课漏斗第三步）：白名单外一律记 manual
+        source=data.source if data.source in ("daily_prompt", "manual", "share", "import") else "manual",
     )
     db.add(db_session)
     db.commit()

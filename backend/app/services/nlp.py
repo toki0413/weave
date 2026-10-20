@@ -258,11 +258,44 @@ def extract_entities(text: str, custom_words: Optional[List[Dict[str, str]]] = N
 
 
 def extract_anon_features(text: str) -> List[str]:
-    """提取匿名节点特征词：那个...的"""
+    """提取匿名节点特征词：指代失败/找词失败信号
+
+    覆盖两类证据：
+    1. "那个...的" 描述性指代（原模式）
+    2. 高危短指代：那个谁 / 那个什么 / 那个叫什么 / 那个某某 / 那个啥
+       —— 对应文献中 MCI/AD 言语的专名提取困难（word-finding difficulty）
+    """
+    features: List[str] = []
     m = re.search(r"那个(.+?)的(?=[，。！？]|$)", text) or re.search(r"那个(.+)的", text)
     if m:
-        return [f.replace("的", "").strip() for f in re.split(r"[、，和]", m.group(1)) if f.strip()]
-    return []
+        features.extend(
+            f.replace("的", "").strip()
+            for f in re.split(r"[、，和]", m.group(1))
+            if f.strip()
+        )
+    # 短指代模式：按出现次数计入，一次出现即一条特征
+    for pat in ("那个谁", "那个什么", "那个叫什么", "那个某某", "那个啥"):
+        cnt = len(re.findall(pat, text))
+        features.extend([pat] * cnt)
+    return features
+
+
+# 找词困难/言语不流畅的填充词（参照 AD 言语研究中的 filler/disfluency 标记）
+_FILLER_PATTERNS = ["那个", "这个", "呃", "啊", "嗯", "就是说", "怎么说", "叫什么来着"]
+
+
+def extract_fillers(text: str) -> Dict[str, Any]:
+    """统计填充词密度（每百字），作为言语不流畅性的量化测量。
+
+    只做测量不参与打分——权重待临床数据支撑后再定。
+    """
+    if not text:
+        return {"count": 0, "per_100": 0.0, "tokens": []}
+    tokens: List[str] = []
+    for pat in _FILLER_PATTERNS:
+        tokens.extend([pat] * len(re.findall(pat, text)))
+    per_100 = len(tokens) * 100.0 / max(len(text), 1)
+    return {"count": len(tokens), "per_100": round(per_100, 2), "tokens": tokens}
 
 
 def check_anomalies(text: str, entities: Dict[str, List[str]]) -> List[Dict[str, Any]]:
@@ -291,12 +324,16 @@ def check_anomalies(text: str, entities: Dict[str, List[str]]) -> List[Dict[str,
                     "type": "event-place-mismatch",
                 })
 
-    # 2. 事件-时间不匹配
+    # 2. 事件-时间不匹配（限定事件所在小句内的时间词，避免跨句误报）
+    clauses = re.split(r"[，。；！？\n]", text)
     for event in entities.get("events", []):
         time_rule = EVENT_TIME_EXPECTATIONS.get(event)
         if time_rule:
-            # 检测文本中的时间表达
-            found_times = [t for t in TIME_EXPRESSIONS if t in text]
+            # 只在包含该事件的小句内搜集时间表达
+            event_clauses = [c for c in clauses if event in c]
+            found_times = [
+                t for c in event_clauses for t in TIME_EXPRESSIONS if t in c
+            ]
             if found_times:
                 # 任一时间不在预期内则报警
                 unexpected = [t for t in found_times if t not in time_rule["expected"]]
@@ -445,6 +482,7 @@ def parse_narrative(text: str, custom_words: Optional[List[Dict[str, str]]] = No
         "anomalies": anomalies,
         "tokens": fmm_segment(text, custom_words),
         "anon_features": anon_features,
+        "fillers": extract_fillers(text),
         "temporal_references": temporal_references,
         "emotion": analyze_emotion(text),
     }

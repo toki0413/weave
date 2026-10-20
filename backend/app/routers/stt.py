@@ -1,4 +1,4 @@
-"""语音识别路由：Vosk 离线优先，Google 在线降级"""
+"""语音识别路由：Vosk 离线优先，Google 在线降级默认关闭（stt_online_fallback 显式开启才启用）"""
 import os
 import json
 import wave
@@ -239,6 +239,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         if not _convert_to_wav(tmp_path, wav_path):
             raise HTTPException(status_code=500, detail="音频格式转换失败，请确保已安装 ffmpeg")
 
+        settings = get_settings()
         # Vosk 离线识别
         if _check_vosk():
             try:
@@ -252,9 +253,13 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                     }
                 return JSONResponse(status_code=422, content={"detail": "无法识别语音，请尝试更清晰的发音"})
             except Exception as e:
-                logger.error("Vosk 识别失败，降级到 Google: %s", e)
+                logger.error("Vosk 识别失败: %s", e)
+                if not settings.stt_online_fallback:
+                    return JSONResponse(status_code=503, content={"detail": "离线识别失败且未启用在线降级，请检查 Vosk 模型配置"})
 
-        # Google 在线降级
+        # Google 在线降级（默认关闭，需 stt_online_fallback=true 显式开启）
+        if not settings.stt_online_fallback:
+            return JSONResponse(status_code=503, content={"detail": "语音识别服务不可用，请配置 Vosk 离线模型"})
         try:
             text = _transcribe_google(wav_path)
             return {
@@ -290,7 +295,7 @@ def _check_google() -> bool:
 async def stt_health():
     """STT 服务健康检查"""
     vosk_ok = _check_vosk()
-    google_ok = _check_google()
+    google_ok = _check_google() and get_settings().stt_online_fallback
     available = vosk_ok or google_ok
     return {
         "status": "ok" if available else "unavailable",

@@ -114,11 +114,20 @@ function parseTextLocal(text) {
     if (ent[cat] && ent[cat].indexOf(t.word) < 0) ent[cat].push(t.word);
   });
 
-  // 匿名节点检测："那个...的"
+  // 匿名节点检测："那个...的" + 高危短指代（那个谁/那个什么等，专名提取困难信号）
   var anonNode = null;
   var anonMatch = text.match(/那个(.+?)的(?=[，。！？]|$)/) || text.match(/那个(.+)的/);
-  if (anonMatch && ent.persons.length === 0) {
-    var features = anonMatch[1].split(/[、，和]/).map(function(f) { return f.replace(/的/g, '').trim(); }).filter(function(f) { return f.length > 0; });
+  var shortAnonPats = ['那个谁', '那个什么', '那个叫什么', '那个某某', '那个啥'];
+  var shortAnonHits = [];
+  shortAnonPats.forEach(function(p) {
+    var m2 = text.match(new RegExp(p, 'g'));
+    if (m2) shortAnonHits = shortAnonHits.concat(m2);
+  });
+  if ((anonMatch || shortAnonHits.length > 0) && ent.persons.length === 0) {
+    var features = anonMatch
+      ? anonMatch[1].split(/[、，和]/).map(function(f) { return f.replace(/的/g, '').trim(); }).filter(function(f) { return f.length > 0; })
+      : [];
+    features = features.concat(shortAnonHits);
     var matched = matchAnon(features, ent);
     if (matched) {
       anonNode = addNode('?X', 'anon');

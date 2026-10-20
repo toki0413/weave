@@ -89,6 +89,9 @@ class SessionCreate(BaseModel):
     narrative_input: NarrativeInput
     metrics: Optional[Dict[str, Any]] = None  # 前端可传预计算指标
     audio_metrics: Optional[Dict[str, Any]] = None  # 语音认知指标（录音时传入）
+    source: Optional[str] = Field(
+        None, max_length=32, description="记录来源归因：daily_prompt / manual / share / import"
+    )
 
 # ========== Graph / Metrics ==========
 class GraphData(BaseModel):
@@ -199,3 +202,35 @@ class StatePayload(BaseModel):
     day_snapshots: Dict[str, Any] = {}
     baseline_metrics: Optional[Dict[str, Any]] = None
     welcome_dismissed: bool = False
+
+# ========== Analytics（2026-10 工程债修复：零埋点→事件漏斗） ==========
+class AnalyticsEventIn(BaseModel):
+    name: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z0-9_.]+$")
+    properties: Optional[Dict[str, Any]] = Field(None, description="轻量属性，禁止 PII/叙事文本")
+    client_ts: Optional[datetime] = None
+
+
+class AnalyticsEventBatch(BaseModel):
+    events: List[AnalyticsEventIn] = Field(..., max_length=50)
+
+
+class DailyPromptFunnel(BaseModel):
+    exposed: int
+    filled: int
+    submitted: int
+    fill_rate: Optional[float] = None
+    submit_rate: Optional[float] = None
+
+
+class AlertFunnel(BaseModel):
+    created: int
+    resolved: int
+    false_alarm: int
+    false_alarm_rate: Optional[float] = None
+
+
+class ResearchSummary(BaseModel):
+    days: int
+    active_users: int
+    daily_prompt: DailyPromptFunnel
+    alerts: AlertFunnel

@@ -62,4 +62,13 @@ describe('语义异常检测 checkSemanticAnomalies', () => {
     expect(timeAnom).toBeTruthy();
     expect(timeAnom.event).toBe('起床');
   });
+
+  it('回归（2026-10）：跨句时间词不应触发误报', () => {
+    // 修复前在全文范围搜集时间词，两个事件会互相误报
+    const anomalies = checkSemanticAnomalies('早上买菜，晚上看电视', {
+      persons: [], places: [], events: ['买菜', '看电视'], items: [],
+    });
+    const timeAnoms = anomalies.filter(a => a.type === 'event-time-mismatch');
+    expect(timeAnoms.length).toBe(0);
+  });
 });

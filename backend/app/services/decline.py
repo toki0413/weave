@@ -13,7 +13,7 @@ from app.services.baseline_personal import (
     check_personal_deviation,
     get_baseline_explanation,
 )
-from app.services.nlp import extract_entities, extract_anon_features
+from app.services.nlp import extract_entities, extract_anon_features, extract_fillers
 
 logger = logging.getLogger("cognitive_garden")
 
@@ -64,6 +64,7 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
     densities: List[float] = []
     event_freq: Dict[str, int] = defaultdict(int)
     per_day_events: List[set] = []
+    filler_rates: List[float] = []
 
     for s in sessions:
         text = s.narrative or ""
@@ -83,10 +84,12 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
         anon_count += len(extract_anon_features(text))
         sentence_lens.append(_avg_sentence_len(text))
         densities.append(_entity_density(text, ents))
+        filler_rates.append(extract_fillers(text)["per_100"])
         per_day_events.append(set(ents.get("events", [])))
 
     avg_sent_len = sum(sentence_lens) / len(sentence_lens) if sentence_lens else 0.0
     avg_density = sum(densities) / len(densities) if densities else 0.0
+    avg_filler_rate = sum(filler_rates) / len(filler_rates) if filler_rates else 0.0
     anon_ratio = anon_count / max(len(sessions), 1)
 
     return {
@@ -101,6 +104,7 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
         "anon_ratio": anon_ratio,
         "avg_sentence_len": avg_sent_len,
         "avg_entity_density": avg_density,
+        "avg_filler_rate": avg_filler_rate,
         "per_day_events": per_day_events,
     }
 
@@ -286,33 +290,43 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
     anon_trend = _detect_anonymization_trend(recent_stats, prev_stats)
     score, level = _compute_decline_score(forgotten, simplification, repetition, anon_trend)
 
-    # 个人基线偏离检测：优先使用个人基线，若存在则增强或覆盖固定阈值
-    personal_deviation = check_personal_deviation(
-        user_id, recent_sessions[-1].metrics or {}, db
-    ) if recent_sessions else {"deviated": False, "dimensions": []}
-
+    # ---- 信号源判定（2026-10 重构：个人基线优先，MyndYou 模式）----
+    # 有个人基线时：基线偏离为主信号，分数直接由偏离维度导出；
+    # 固定阈值四维分析降为辅助明细（保留在 forgotten/simplification 等字段）。
+    # 无个人基线时（冷启动 <2 条会话）：沿用固定阈值分数。
+    signal_source = "fixed_threshold"
+    personal_deviation = (
+        check_personal_deviation(user_id, recent_sessions[-1].metrics or {}, db)
+        if recent_sessions
+        else {"deviated": False, "dimensions": [], "has_baseline": False}
+    )
     explanation = None
-    if personal_deviation.get("deviated"):
-        explanation = get_baseline_explanation(personal_deviation)
-        # 个人基线偏离时，若固定阈值未触发，则提升到至少"关注"
+
+    if personal_deviation.get("has_baseline"):
+        signal_source = "personal_baseline"
         danger_count = sum(
-            1 for d in personal_deviation.get("dimensions", [])
-            if d.get("severity") == "danger"
+            1 for d in personal_deviation.get("dimensions", []) if d.get("severity") == "danger"
         )
         warning_count = sum(
-            1 for d in personal_deviation.get("dimensions", [])
-            if d.get("severity") == "warning"
+            1 for d in personal_deviation.get("dimensions", []) if d.get("severity") == "warning"
         )
-        if danger_count > 0 and level != "警告":
-            level = "警告"
-            score = max(score, 50)
-        elif warning_count > 0 and level == "正常":
+        # 个人基线分数映射：危险维度 +25、关注维度 +10，上限 100。
+        # 区分度来自个体自身历史分布（z-score），不再叠加群体固定阈值。
+        personal_score = min(100, danger_count * 25 + warning_count * 10)
+        score = personal_score
+        if score < 20:
+            level = "正常"
+        elif score < 50:
             level = "关注"
-            score = max(score, 20)
+        else:
+            level = "警告"
+        if personal_deviation.get("deviated"):
+            explanation = get_baseline_explanation(personal_deviation)
 
     return {
         "decline_score": score,
         "level": level,
+        "signal_source": signal_source,
         "window_days": window_days,
         "recent_session_count": len(recent_sessions),
         "previous_session_count": len(prev_sessions),

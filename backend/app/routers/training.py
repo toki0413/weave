@@ -12,6 +12,19 @@ from app.routers.auth import get_current_user
 router = APIRouter(prefix="/training", tags=["training"])
 
 
+@router.get("/daily-prompt")
+def get_daily_prompt_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """60 秒日课：当日语音引导话题（多模态契约，见 services/daily_prompt.py）
+
+    极简适老化：voice 主通道 + text 大字 + haptic 起止；LLM 个性化可选。
+    """
+    from app.services.daily_prompt import get_daily_prompt
+    return get_daily_prompt(current_user.id)
+
+
 @router.post("/", response_model=TrainingRecordOut)
 def submit_training(
     data: TrainingRecordCreate,

@@ -42,12 +42,17 @@ function checkSemanticAnomalies(text, ent) {
     }
   });
 
-  // 2. 事件-时间不匹配
+  // 2. 事件-时间不匹配（限定事件所在小句内的时间词，避免跨句误报）
+  var clauses = text.split(/[，。；！？\n]/);
   ent.events.forEach(function(ev) {
     var timeRule = EVENT_TIME_EXPECTATIONS[ev];
     if (timeRule) {
-      // 检测文本中的时间表达
-      var foundTimes = TIME_EXPRESSIONS.filter(function(t) { return text.indexOf(t) >= 0; });
+      // 只在包含该事件的小句内搜集时间表达
+      var eventClauses = clauses.filter(function(c) { return c.indexOf(ev) >= 0; });
+      var foundTimes = [];
+      eventClauses.forEach(function(c) {
+        TIME_EXPRESSIONS.forEach(function(t) { if (c.indexOf(t) >= 0) foundTimes.push(t); });
+      });
       if (foundTimes.length > 0) {
         var unexpected = foundTimes.filter(function(t) { return timeRule.expected.indexOf(t) < 0; });
         if (unexpected.length > 0) {

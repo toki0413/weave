@@ -961,6 +961,24 @@ button:focus-visible, textarea:focus-visible, input:focus-visible {
 .notif-item.notif-warning { border-left: 3px solid var(--warn); }
 .notif-item.notif-danger { border-left: 3px solid var(--danger); }
 
+/* 告警闭环回填：反馈按钮行 */
+.notif-resolve-row {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--rule);
+}
+.notif-resolve-row.resolved { border-top-style: solid; }
+.notif-resolve-btn {
+  font-size: 0.74rem; padding: 4px 10px;
+  border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--bg); color: var(--ink2);
+  cursor: pointer; transition: all 0.15s ease;
+}
+.notif-resolve-btn:hover { border-color: var(--accent); color: var(--accent); }
+.notif-resolve-btn:disabled { opacity: 0.5; cursor: default; }
+.notif-resolve-btn.false-alarm:hover { border-color: var(--danger); color: var(--danger); }
+.notif-resolved-label { font-size: 0.74rem; color: var(--muted); }
+
 /* ============ 全局 Toast 提示 ============ */
 .toast-container {
   position: fixed;
@@ -1267,3 +1285,24 @@ button:focus-visible, textarea:focus-visible, input:focus-visible {
   font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
 }
 
+
+/* ===== 60 秒日课题目条（适老化：大字、高对比、可朗读、可点击填入） ===== */
+.daily-prompt-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: #f0f7ff; border: 1px solid #cfe3ff; border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; cursor: pointer;
+}
+.daily-prompt-banner.hidden { display: none; }
+.daily-prompt-banner:hover, .daily-prompt-banner:focus-visible { background: #e5f0ff; outline: 2px solid #7aa7e8; }
+.daily-prompt-tag {
+  flex-shrink: 0; font-size: 14px; color: #2563eb; font-weight: 600;
+  background: #dbeafe; border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+}
+.daily-prompt-text {
+  font-size: 22px; line-height: 1.4; color: #1a1a1a; font-weight: 500;
+}
+.daily-prompt-speak {
+  flex-shrink: 0; margin-left: auto; font-size: 22px; background: none;
+  border: none; cursor: pointer; padding: 6px; border-radius: 8px;
+}
+.daily-prompt-speak:hover { background: #dbeafe; }

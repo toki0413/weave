@@ -109,6 +109,41 @@ describe('图谱指标 computeMetrics', () => {
     // entropy = 1 bit, 归一化除以 log2(4)=2 → 0.5
     expect(m.entropy).toBeCloseTo(0.5);
   });
+
+  it('回归（2026-10）：SELF 星形注入不抬高连通度', () => {
+    // 三个互不相连的实体仅通过 SELF 相连：实体子图连通度应为 1/3
+    state.nodes = [
+      { id: 0, label: '我', type: 'self' },
+      { id: 1, label: '老张', type: 'person' },
+      { id: 2, label: '公园', type: 'place' },
+      { id: 3, label: '散步', type: 'event' },
+    ];
+    state.edges = [
+      { from: 0, to: 1, type: 'emotion' },
+      { from: 0, to: 2, type: 'space' },
+      { from: 0, to: 3, type: 'time' },
+    ];
+    const m = computeMetrics();
+    expect(m.connectivity).toBeCloseTo(1 / 3);
+  });
+
+  it('回归（2026-10）：实体直连边计入连通度', () => {
+    // A-B 直连 + C 孤立（仅经 SELF）→ 实体子图连通度 2/3
+    state.nodes = [
+      { id: 0, label: '我', type: 'self' },
+      { id: 1, label: '老张', type: 'person' },
+      { id: 2, label: '公园', type: 'place' },
+      { id: 3, label: '散步', type: 'event' },
+    ];
+    state.edges = [
+      { from: 0, to: 1, type: 'emotion' },
+      { from: 0, to: 2, type: 'space' },
+      { from: 0, to: 3, type: 'time' },
+      { from: 1, to: 2, type: 'space' },
+    ];
+    const m = computeMetrics();
+    expect(m.connectivity).toBeCloseTo(2 / 3);
+  });
 });
 
 
