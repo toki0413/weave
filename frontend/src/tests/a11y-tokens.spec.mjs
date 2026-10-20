@@ -11,6 +11,7 @@ const STATE = fs.readFileSync(path.join(SRC, 'state.js'), 'utf8');
 const INIT = fs.readFileSync(path.join(SRC, 'ui/init.js'), 'utf8');
 const HEADER = fs.readFileSync(path.join(SRC, 'ui/panels/header.js'), 'utf8');
 const MAIN = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
+const NEBULA = fs.readFileSync(path.join(SRC, '3d/memory-nebula.js'), 'utf8');
 
 const hx = c => { c = c.replace('#',''); if (c.length===3) c=[...c].map(x=>x+x).join(''); return [0,2,4].map(i=>parseInt(c.slice(i,i+2),16)); };
 const lin = v => { v/=255; return v<=0.03928 ? v/12.92 : ((v+0.055)/1.055)**2.4; };
@@ -91,19 +92,40 @@ test('字号阶梯地板越过 14pt，且不把非老人端紧凑档误读为基
   }
 });
 
-test('SVG presentation attribute 的字号被 CSS 覆盖，且零 !important', () => {
+test('SVG 文本字号由 CSS 覆盖，且覆盖必须穷尽 render.js 实际写的值', () => {
+  const RENDER = fs.readFileSync(path.join(SRC, 'ui/render.js'), 'utf8');
+  const hardcoded = [...new Set([...RENDER.matchAll(/setAttribute\('font-size',\s*(?:[^)]*\?)?\s*'?(\d+)'?/g)].map(m => m[1]))];
+  assert.ok(hardcoded.length >= 2, '未从 render.js 解析出硬编码字号，本断言失去意义: ' + hardcoded);
+  for (const v of hardcoded) {
+    assert.ok(new RegExp('\\[font-size="'+v+'"\\]\\s*\\{\\s*font-size:').test(live),
+      `render.js 写了 font-size="${v}"，但没有对应的 CSS 覆盖`);
+  }
   assert.ok(/\.nodes-group text\[font-size="12"\]\s*\{\s*font-size:\s*1\.05rem/.test(live));
   assert.ok(/\.nodes-group text\[font-size="14"\]\s*\{\s*font-size:\s*1\.25rem/.test(live));
   assert.ok(/\.nodes-group text\[font-size="10"\]\s*\{\s*font-size:\s*0\.9rem/.test(live));
-  const rules = live.split('}').filter(b => b.includes('nodes-group text') && b.includes('font-size'));
-  assert.equal(rules.filter(r => r.includes('!important')).length, 0,
-    '出现 !important 说明未加 layer 的 CSS 已压不住 presentation attribute');
+  // 覆盖之所以不需要 !important，是因为 presentation attribute 优先级最低；
+  // 一旦出现 !important，说明这条依据已经不成立，整套"零 JS 改动"的前提就塌了
+  const overrides = [...live.matchAll(/[^{}]*\[font-size="\d+"\][^{}]*\{([^}]*)\}/g)].map(m => m[1]);
+  assert.ok(overrides.length >= 3, '覆盖规则数量异常: ' + overrides.length);
+  assert.equal(overrides.filter(o => o.includes('!important')).length, 0,
+    '未加 layer 的 CSS 本应压得住 presentation attribute，用 !important 说明前提变了');
+  // 光锁上面三条会漏掉"把 .node-sub 等语义类改回写死 px"这种回归，故再锁不变式：
+  const textRules = [...live.matchAll(/\.(node-label|node-label--self|node-sub)\s*\{([^}]*)\}/g)];
+  assert.ok(textRules.length >= 3, '语义类数量异常: ' + textRules.length);
+  for (const [, cls, body] of textRules) {
+    assert.ok(/font-size:\s*var\(--t-/.test(body), '.' + cls + ' 不再引用 --t-* token');
+    assert.ok(!/font-size:\s*\d+px/.test(body), '.' + cls + ' 出现写死的 px 字号');
+    assert.ok(!body.includes('!important'), '.' + cls + ' 用了 !important');
+  }
 });
 
-test('节点色唯一真相在 state.js：CSS 不得留 circle[fill 规则', () => {
-  const decls = [...live.matchAll(/[^\{\}]*\{\s*[^\{\}]*fill:\s*#[0-9A-Fa-f]{6}\s*;?\s*\}/g)]
-    .filter(m => /circle\[fill\s*=/.test(m[0].split('{')[0]));
-  assert.equal(decls.length, 0, '存在节点圆 CSS 覆盖，会让图例与图不同色: ' + decls.map(d=>d[0].slice(0,60)));
+test('节点色唯一真相在 state.js：CSS 不得留任何 circle[fill 规则', () => {
+  const all = [...live.matchAll(/([^{}]*)\{([^{}]*)\}/g)];
+  const decls = all.filter(m => /circle\[fill\s*=/.test(m[1]));
+  // 反向自查：锚点解析必须有足够多的规则块，否则"零命中"不代表干净
+  assert.ok(all.length > 200, 'CSS 规则块解析数量异常: ' + all.length);
+  assert.equal(decls.length, 0,
+    '存在节点圆 CSS 覆盖，会让 leftPanel.js:542 的图例与图不同色: ' + decls.map(d => d[1].trim().slice(0, 70)));
 });
 
 test('NODE_TYPES 六类同时满足白字≥4.5 与对两种画布底≥3', () => {
@@ -134,4 +156,19 @@ test('启动与字号：JS 不再无条件挂老人端、不再内联写 --font-
     assert.ok(!/setProperty\(\s*['"]--font-size['"]/.test(s), n+' 仍在写 --font-size');
   }
   assert.ok(/applyMode\(''\)/.test(MAIN), 'getMe 失败分支未归零，会停在老人端');
+});
+
+test('3D 星云色板由 NODE_TYPES 派生，不再手抄', () => {
+  assert.ok(/import \{ NODE_TYPES \} from '\.\.\/state\.js'/.test(NEBULA));
+  assert.ok(/Object\.keys\(NODE_TYPES\)\s*\.forEach/.test(NEBULA));
+  assert.ok(/TYPE_COLORS\[k\]\s*=\s*hexToRGBA\(hex\)/.test(NEBULA));
+  assert.ok(!/TYPE_COLORS\s*=\s*\{\s*\w+\s*:\s*\[/.test(NEBULA), '仍有 RGBA 字面量');
+  assert.ok(/throw new Error\(/.test(NEBULA), '缺少色值合法性守卫');
+  // 恒假守卫的判据：不导入 state，就不可能写出 if (state.debug)（state 本无 debug 字段）
+  assert.ok(!/import\s*\{[^}]*\bstate\b[^}]*\}\s*from/.test(NEBULA),
+    '3D 又导入了 state，恒假的 state.debug 守卫可能回归');
+  assert.ok(!/state\.debug/.test(NEBULA), '存在恒假守卫（state 无 debug 字段）');
+  // 兜底与 2D 同构：render.js:430 用 NODE_TYPES.item，3D 必须也回退 item
+  assert.ok(/TYPE_COLORS\[n\.type\]\s*\|\|\s*TYPE_COLORS\.item/.test(NEBULA),
+    '缺 type 时两端兜底不一致，又会造出新的颜色分歧');
 });

@@ -11,18 +11,40 @@ import {
   createIcosahedron,
   degToRad, lerp, clamp
 } from './webgl-utils.js';
+import { NODE_TYPES } from '../state.js';
 
-// Node type colors (RGBA 0-1)
-var TYPE_COLORS = {
-  person: [0.24, 0.44, 0.66, 1.0],   // 蓝色
-  event:  [0.29, 0.49, 0.29, 1.0],   // 绿色
-  place:  [0.72, 0.42, 0.30, 1.0],   // 橙色
-  time:   [0.48, 0.33, 0.58, 1.0],   // 紫色
-  item:   [0.55, 0.48, 0.44, 1.0],   // 棕色
-  self:   [0.18, 0.35, 0.17, 1.0],   // 深绿
-  anon:   [0.72, 0.53, 0.04, 1.0],   // 金色
-};
+// ---- 节点类型色板：与 2D 同源 ----
+// 这里原来是一份手抄的 RGBA 表，与 state.js 的 NODE_TYPES 已经漂移：
+// 六类全部不一致，且 person / event 的颜色是互换的（2D 人物绿、这里人物蓝）。
+// 家属端图例来自 leftPanel.js，读的是 NODE_TYPES，于是同一个"人物"节点
+// 在 2D 是绿色、切到 3D 星云变蓝色，图例失去意义。
+// 现在由 NODE_TYPES 派生，色值的唯一真相仍只在 state.js；新增类型自动跟随。
+function hexToRGBA(hex) {
+  var h = String(hex).replace('#', '');
+  if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+  return [
+    parseInt(h.slice(0, 2), 16) / 255,
+    parseInt(h.slice(2, 4), 16) / 255,
+    parseInt(h.slice(4, 6), 16) / 255,
+    1.0,
+  ];
+}
 
+var TYPE_COLORS = {};
+Object.keys(NODE_TYPES).forEach(function (k) {
+  var hex = NODE_TYPES[k] && NODE_TYPES[k].color;
+  // 守卫无条件生效。这个模块是动态 import 的（view-switcher.js:128），
+  // 抛错会被 .catch 接住并 setViewMode('2d') 回退，所以宁可回退 2D，
+  // 也不要拿一个静默算错的 NaN 颜色去渲染。
+  if (typeof hex !== 'string' || !/^#[0-9A-Fa-f]{3,6}$/.test(hex)) {
+    throw new Error('NODE_TYPES.' + k + ' 缺少合法 color，3D 色板无法与 2D 同源：' + hex);
+  }
+  TYPE_COLORS[k] = hexToRGBA(hex);
+});
+
+// ---- 情绪着色：与节点类型无关，保留本地定义 ----
+// TODO(同源化): positive 的 [0.29,0.49,0.29] 与 NODE_TYPES.person #4A7C4A 是同一个绿，
+// 本次只收口节点色，情绪色另做一次，避免连带改变情感模式的观感。
 var EMOTION_COLORS = {
   positive: [0.29, 0.49, 0.29, 1.0], // 绿色
   negative: [0.78, 0.36, 0.36, 1.0], // 红色
