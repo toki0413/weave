@@ -322,3 +322,22 @@ class AuditLog(Base):
 
     actor = relationship("User", foreign_keys=[actor_id])
     target = relationship("User", foreign_keys=[target_user_id])
+
+
+class MemoryCardShare(Base):
+    """本周记忆卡片分享（2026-10 增长升级：K 因子回路）
+
+    家属生成聚合卡片（脱敏：只有计数/高频实体/趋势，绝不含叙事原文），
+    生成公开链接供微信转发；访客落地经 /metrics/events/public 回传归因。
+    """
+    __tablename__ = "memory_card_shares"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    family_user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    elderly_user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    week_start = Column(DateTime, nullable=False)  # 卡片覆盖窗口起点（UTC）
+    days = Column(Integer, default=7)
+    payload = Column(JSON, nullable=False)  # 脱敏后的卡片内容
+    created_at = Column(DateTime, default=_utc_now, index=True)
+
+    elderly = relationship("User", foreign_keys=[elderly_user_id])

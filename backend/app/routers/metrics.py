@@ -62,6 +62,38 @@ def report_events(
     return {"accepted": len(rows)}
 
 
+# 匿名埋点白名单：仅增长归因类事件（分享落地/注册归因），无用户态
+_PUBLIC_EVENT_WHITELIST = {"landing_viewed", "register_from_share"}
+
+
+@router.post("/events/public", dependencies=[rate_limit(10, 60)])
+def report_public_events(
+    batch: AnalyticsEventBatch,
+    db: Session = Depends(get_db),
+):
+    """免登录埋点：分享卡片访客落地与注册归因（K 因子度量）。
+
+    只收白名单事件名，属性 >512B 丢弃；user_id 恒为 NULL。
+    """
+    rows = []
+    for ev in batch.events:
+        if ev.name not in _PUBLIC_EVENT_WHITELIST:
+            continue
+        props = ev.properties
+        if props and len(str(props)) > 512:
+            props = {"_truncated": True}
+        rows.append(AnalyticsEvent(
+            user_id=None,
+            event_name=ev.name,
+            properties=props,
+            client_ts=ev.client_ts,
+        ))
+    if rows:
+        db.add_all(rows)
+        db.commit()
+    return {"accepted": len(rows)}
+
+
 def _pct(num: int, den: int):
     return round(num / den, 4) if den > 0 else None
 

@@ -290,6 +290,37 @@ document.addEventListener('visibilitychange', function() {
 let _sessionSource = null;
 export function markSessionSource(source) { _sessionSource = source; }
 
+// 匿名公开埋点（免登录）：分享落地/注册归因，静默失败
+export async function trackEventPublic(name, properties = {}) {
+  try {
+    await fetch(API_BASE + '/metrics/events/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: [{ name: name, properties: properties, client_ts: new Date().toISOString() }] }),
+      keepalive: true,
+    });
+  } catch (e) { /* 静默 */ }
+}
+
+// ========== 本周记忆卡片（K 因子分享回路） ==========
+export function generateMemoryCard(days = 7) {
+  return apiFetch(`/card/generate?days=${days}`, { method: 'POST' });
+}
+export function getLatestMemoryCard() {
+  return apiFetch('/card/latest', { cache: true });
+}
+export function getSharedCard(cardId) {
+  return fetch(`${API_BASE}/card/public/${cardId}`).then(function(resp) {
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return resp.json();
+  });
+}
+
+// ========== 研究漏斗（doctor 端看板） ==========
+export function getResearchSummary(days = 30) {
+  return apiFetch(`/metrics/research/summary?days=${days}`, { cache: true });
+}
+
 function computeDiff(current, previous) {
   var diff = { added: [], removed: [], modified: [] };
   if (!previous) {
@@ -354,6 +385,14 @@ export async function register(username, password, role = 'elderly', name = '', 
   const data = await apiFetch('/auth/register', { method: 'POST', body });
   setToken(data.access_token);
   if (data.refresh_token) setRefreshToken(data.refresh_token);
+  // 分享卡片注册归因（K 因子）：注册成功后回传一次性事件
+  try {
+    var shareRef = localStorage.getItem('cg_share_ref');
+    if (shareRef) {
+      trackEventPublic('register_from_share', { card_id: shareRef });
+      localStorage.removeItem('cg_share_ref');
+    }
+  } catch (e) { /* 归因失败不影响注册 */ }
   return data;
 }
 

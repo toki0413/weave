@@ -240,7 +240,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             raise HTTPException(status_code=500, detail="音频格式转换失败，请确保已安装 ffmpeg")
 
         settings = get_settings()
-        # Vosk 离线识别
+        # 1) Vosk 离线识别
         if _check_vosk():
             try:
                 text = _transcribe_vosk(wav_path)
@@ -251,15 +251,34 @@ async def transcribe_audio(audio: UploadFile = File(...)):
                         "source": "vosk",
                         "audio_metrics": _extract_audio_features(wav_path, text),
                     }
-                return JSONResponse(status_code=422, content={"detail": "无法识别语音，请尝试更清晰的发音"})
             except Exception as e:
                 logger.error("Vosk 识别失败: %s", e)
-                if not settings.stt_online_fallback:
-                    return JSONResponse(status_code=503, content={"detail": "离线识别失败且未启用在线降级，请检查 Vosk 模型配置"})
 
-        # Google 在线降级（默认关闭，需 stt_online_fallback=true 显式开启）
+        # 2) 火山引擎一句话识别（配置齐备才启用；官方适老场景：方言+共情）。
+        #    Vosk 空结果也落到这里——方言/口音正是离线小模型的盲区
+        volc_configured = all([settings.asr_volc_app_id, settings.asr_volc_token, settings.asr_volc_cluster])
+        if volc_configured:
+            try:
+                from app.services.volc_asr import transcribe_wav
+                text = transcribe_wav(
+                    wav_path,
+                    settings.asr_volc_app_id,
+                    settings.asr_volc_token,
+                    settings.asr_volc_cluster,
+                )
+                if text.strip():
+                    return {
+                        "text": text,
+                        "confidence": 0.9,
+                        "source": "volcengine",
+                        "audio_metrics": _extract_audio_features(wav_path, text),
+                    }
+            except Exception as e:
+                logger.error("火山识别失败: %s", e)
+
+        # 3) Google 在线降级（默认关闭，需 stt_online_fallback=true 显式开启）
         if not settings.stt_online_fallback:
-            return JSONResponse(status_code=503, content={"detail": "语音识别服务不可用，请配置 Vosk 离线模型"})
+            return JSONResponse(status_code=503, content={"detail": "语音识别服务不可用，请配置 Vosk 离线模型或火山引擎语音服务"})
         try:
             text = _transcribe_google(wav_path)
             return {

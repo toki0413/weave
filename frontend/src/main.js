@@ -77,6 +77,17 @@ if ('serviceWorker' in navigator) {
     if (initStarted) return;
     initStarted = true;
     try {
+      // 公开分享页路由：免登录渲染，跳过主应用初始化
+      if (/^#\/share\/card\//.test(location.hash || '')) {
+        import('./ui/share-page.js').then(function(mod) {
+          var skeleton = document.getElementById('skeleton');
+          if (skeleton) skeleton.remove();
+          mod.renderSharePage(document.getElementById('app') || document.body);
+        }).catch(function(e) {
+          console.error('share page error:', e);
+        });
+        return;
+      }
       var result = init();
       window.__init_called__ = true;
 

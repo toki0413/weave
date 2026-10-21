@@ -14,7 +14,7 @@ vi.mock('../db/offline.js', () => ({
   cacheScales: async () => {},
 }));
 
-import { trackEvent, flushTrackEvents, markSessionSource, createSession } from '../api/client.js';
+import { trackEvent, flushTrackEvents, markSessionSource, createSession, register, getSharedCard } from '../api/client.js';
 
 const QUEUE_KEY = 'cg_track_queue';
 
@@ -111,5 +111,43 @@ describe('会话来源归因 markSessionSource', () => {
     await createSession(1, '今天看电视');
     const sessionCall = calls.find((c) => c.url.endsWith('/api/v1/session/'));
     expect(JSON.parse(sessionCall.options.body).source).toBeUndefined();
+  });
+});
+
+describe('分享归因（K 因子）', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('注册成功后回传 register_from_share 并清除归因标记', async () => {
+    const calls = [];
+    mockFetchOk(calls);
+    localStorage.setItem('cg_share_ref', 'card-abc');
+    await register('13900001234', 'Test123456!');
+    const attribution = calls.find((c) => c.url.includes('/metrics/events/public'));
+    expect(attribution).toBeTruthy();
+    const body = JSON.parse(attribution.options.body);
+    expect(body.events[0].name).toBe('register_from_share');
+    expect(body.events[0].properties.card_id).toBe('card-abc');
+    expect(localStorage.getItem('cg_share_ref')).toBeNull();
+  });
+
+  it('无归因标记时注册不发公开事件', async () => {
+    const calls = [];
+    mockFetchOk(calls);
+    await register('13900001235', 'Test123456!');
+    expect(calls.find((c) => c.url.includes('/metrics/events/public'))).toBeUndefined();
+  });
+
+  it('getSharedCard 免登录直连公开端点', async () => {
+    const calls = [];
+    mockFetchOk(calls);
+    const data = await getSharedCard('card-xyz');
+    const call = calls.find((c) => c.url.includes('/card/public/card-xyz'));
+    expect(call).toBeTruthy();
+    // 裸 fetch 不带任何头（无 Authorization）
+    expect((call.options && call.options.headers && call.options.headers.Authorization)).toBeUndefined();
+    expect(data).toBeTruthy();
   });
 });

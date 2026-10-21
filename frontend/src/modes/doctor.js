@@ -1,7 +1,7 @@
 // ============ DOCTOR MODE ============
 // 医生端数据面板：量表趋势 + 异常标记 + 导出 + 发送建议
 import { el } from '../ui/components.js';
-import { getScaleHistory, getDeclineAnalysis, sendWebSocketAdvice, listSessions, getLatestGraph } from '../api/client.js';
+import { getScaleHistory, getDeclineAnalysis, sendWebSocketAdvice, listSessions, getLatestGraph, getResearchSummary } from '../api/client.js';
 import { connect as wsConnect, send as wsSend } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 
@@ -128,6 +128,58 @@ export function renderDoctorMode(container) {
   viewToggle.appendChild(btn3D);
   memorySection.appendChild(viewToggle);
   app.appendChild(memorySection);
+
+  // 研究漏斗看板（数据来自 /metrics/research/summary，30 天窗口）
+  app.appendChild(el('h3', {
+    style: { marginTop: '8px', fontSize: '1.1rem', color: 'var(--ink)' }
+  }, '研究漏斗 · 近 30 天'));
+  var funnelSection = el('div', {
+    id: 'doctor-funnel',
+    style: {
+      background: 'var(--bg2)',
+      borderRadius: '12px',
+      padding: '12px',
+      display: 'flex',
+      gap: '12px',
+      flexWrap: 'wrap',
+    }
+  });
+  funnelSection.appendChild(el('div', {
+    style: { color: 'var(--muted)', fontSize: '0.85rem' }
+  }, '加载漏斗数据中…'));
+  app.appendChild(funnelSection);
+
+  function funnelChip(label, value, accent) {
+    return el('div', {
+      style: {
+        background: 'var(--bg)',
+        borderRadius: '10px',
+        padding: '10px 16px',
+        borderLeft: '3px solid ' + (accent || 'var(--accent)'),
+        minWidth: '110px',
+      }
+    }, [
+      el('div', { style: { fontSize: '1.3rem', fontWeight: '700', color: 'var(--ink)' } }, String(value)),
+      el('div', { style: { fontSize: '0.75rem', color: 'var(--muted)' } }, label),
+    ]);
+  }
+  getResearchSummary(30).then(function(s) {
+    funnelSection.innerHTML = '';
+    if (!s || !s.daily_prompt) {
+      funnelSection.appendChild(el('div', { style: { color: 'var(--muted)', fontSize: '0.85rem' } }, '暂无漏斗数据'));
+      return;
+    }
+    var dp = s.daily_prompt;
+    funnelSection.appendChild(funnelChip('活跃用户', s.active_users != null ? s.active_users : '—'));
+    funnelSection.appendChild(funnelChip('日课曝光', dp.exposed, 'var(--accent3)'));
+    funnelSection.appendChild(funnelChip('填入', dp.filled, 'var(--accent3)'));
+    funnelSection.appendChild(funnelChip('提交', dp.submitted, 'var(--accent3)'));
+    funnelSection.appendChild(funnelChip('填入率', dp.fill_rate != null ? Math.round(dp.fill_rate * 100) + '%' : '—', 'var(--warn)'));
+    funnelSection.appendChild(funnelChip('误报率', s.alerts && s.alerts.false_alarm_rate != null ? Math.round(s.alerts.false_alarm_rate * 100) + '%' : '—', 'var(--danger)'));
+  }).catch(function() {
+    funnelSection.innerHTML = '';
+    funnelSection.appendChild(el('div', { style: { color: 'var(--muted)', fontSize: '0.85rem' } }, '漏斗数据加载失败（仅医生角色可用）'));
+  });
 
   var _doctorNodes = [];
   var _doctorSessions = [];

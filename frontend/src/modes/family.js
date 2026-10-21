@@ -1,7 +1,7 @@
 // ============ FAMILY MODE (3D Nebula Immersive) ============
 // 家属端：默认 3D 星云浏览，飞行漫游，时间筛选，情感色彩
 import { el } from '../ui/components.js';
-import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare } from '../api/client.js';
+import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare, generateMemoryCard, getLatestMemoryCard, trackEvent } from '../api/client.js';
 import { connect as wsConnect, send as wsSend, isConnected, isUsingSSE } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 
@@ -283,6 +283,81 @@ export function renderFamilyMode(container, elderlyData) {
 
   nebulaWrap.appendChild(narrativePanel);
   app.appendChild(nebulaWrap);
+
+  // 本周记忆卡片（分享回路：生成→复制链接→微信转发；内容只含聚合数据）
+  var cardSection = el('div', {
+    className: 'memory-card-section',
+    style: {
+      borderTop: '1px solid var(--rule)',
+      paddingTop: '10px',
+      flexShrink: 0,
+    }
+  });
+  cardSection.appendChild(el('div', {
+    style: { fontWeight: '700', marginBottom: '6px', fontSize: '0.9rem' }
+  }, '本周记忆卡片'));
+  var cardBody = el('div', { style: { fontSize: '0.85rem', color: 'var(--ink2)' } });
+  cardBody.appendChild(el('div', { style: { color: 'var(--muted)' } }, '加载中…'));
+  cardSection.appendChild(cardBody);
+  app.appendChild(cardSection);
+
+  function renderCardPayload(payload, cardId) {
+    cardBody.innerHTML = '';
+    var statRow = el('div', {
+      style: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '6px' }
+    });
+    [['记录', payload.record_count + ' 次'], ['活跃', payload.active_days + ' 天'],
+     ['字数', payload.total_chars], ['状态', payload.trend_level]].forEach(function(pair) {
+      statRow.appendChild(el('span', {
+        style: {
+          background: 'var(--bg2)', borderRadius: '8px',
+          padding: '4px 10px', fontSize: '0.8rem',
+        }
+      }, pair[0] + ' ' + pair[1]));
+    });
+    cardBody.appendChild(statRow);
+    if (payload.top_entities && payload.top_entities.length) {
+      cardBody.appendChild(el('div', {
+        style: { color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '6px' }
+      }, '常提起：' + payload.top_entities.map(function(e) { return e.label; }).join('、')));
+    }
+    cardBody.appendChild(el('button', {
+      className: 'btn-secondary',
+      style: { padding: '6px 14px', fontSize: '0.85rem' },
+      onclick: function() {
+        var url = location.origin + location.pathname + '#/share/card/' + cardId;
+        var done = function() { trackEvent('memory_card_shared', { card_id: cardId }); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(done).catch(function() { prompt('复制分享链接：', url); });
+        } else {
+          prompt('复制分享链接：', url);
+        }
+      }
+    }, '复制分享链接'));
+  }
+
+  getLatestMemoryCard().then(function(res) {
+    if (res && res.card) {
+      renderCardPayload(res.card.payload, res.card.id);
+    } else {
+      cardBody.innerHTML = '';
+      cardBody.appendChild(el('button', {
+        className: 'btn-primary',
+        style: { padding: '6px 14px', fontSize: '0.85rem' },
+        onclick: function() {
+          generateMemoryCard(7).then(function(data) {
+            renderCardPayload(data.payload, data.id);
+          }).catch(function() {
+            cardBody.innerHTML = '';
+            cardBody.appendChild(el('span', { style: { color: 'var(--muted)', fontSize: '0.8rem' } }, '卡片生成失败，请稍后重试'));
+          });
+        }
+      }, '生成本周卡片'));
+    }
+  }).catch(function() {
+    cardBody.innerHTML = '';
+    cardBody.appendChild(el('span', { style: { color: 'var(--muted)', fontSize: '0.8rem' } }, '记忆卡片不可用'));
+  });
 
   // 发送关怀区域
   var careSection = el('div', {
