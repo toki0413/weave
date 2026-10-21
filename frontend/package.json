@@ -17,6 +17,6 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@sentry/browser": "^10.64.0"
+    "@sentry/browser": "^11.8.0"
   }
 }
