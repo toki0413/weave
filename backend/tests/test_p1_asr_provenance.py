@@ -152,7 +152,7 @@ def test_0014_is_structurally_valid_guard():
 # "199 全绿、但 0017 在存量库上根本不会被应用"的情况 —— create_all 对已存在的
 # 表是跳过的，而那四列恰恰要靠 0017 加。断言列存在不等于跑过迁移。
 
-import importlib                                       # noqa: E402
+import shutil                                            # noqa: E402
 from pathlib import Path                               # noqa: E402
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -189,60 +189,61 @@ def test_all_migration_files_are_loadable_by_scriptdirectory():
     assert not bad
 
 
-def _fresh_modules_with_url(tmp_path, monkeypatch):
-    """把 settings/engine 指到临时文件库。
+ALEMBIC_SRC = BACKEND_DIR / "alembic"
+INI_SRC = BACKEND_DIR / "alembic.ini"
 
-    必须 reload：alembic/env.py:16 会用 get_settings().database_url 覆盖 ini 里的
-    sqlalchemy.url，而 get_settings 带 lru_cache、app.database 在 import 时就建好
-    engine —— 不重载就只能连到 conftest 那个内存库上，测不到真东西。
+from alembic.config import Config            # noqa: E402  _migration_cfg 需要
+
+
+def _migration_cfg(tmp_path, monkeypatch):
+    """把 alembic 脚本目录复制到 tmp，并给出子进程要用的路径参数。
+
+    刻意**不在本进程 reload 任何 app 模块**，也**不在本进程调 command.upgrade**：
+    alembic/env.py 用的是 get_settings()，而它带 lru_cache、在 conftest 导入
+    app.database 时就已缓存成默认值 sqlite:///./cognitive_garden.db。
+    monkeypatch 对环境变量有效、对已缓存的 settings 无效 —— 实测结果是
+    upgrade 打到仓库工作目录里那个开发库上（该库后来证实是我的 e2e 脚本建的，
+    未伤到真实数据）。改为子进程执行，从零导入，URL 必然生效。
     """
     url = f"sqlite:///{(tmp_path / 'mig.db').as_posix()}"
-    monkeypatch.setenv("CG_DATABASE_URL", url)
-    # conftest 设过 database_url 环境变量，pydantic_settings 两者都读，须一并覆盖
     monkeypatch.setenv("database_url", url)
-    import app.config
-    import app.database
-    import app.models
-    # 顺序经实测确定：config → database → models，且 models 只能重载一次。
-    #   · 先重载 database，engine 才会指向临时库；再重载 models，模型才会注册到
-    #     与 database.Base 同一个（新的）MetaData 上。
-    #   · models 重载两次会往同一个 Base 重复定义 __tablename__='users'，
-    #     报 "Table 'users' is already defined"；重载顺序颠倒则 create_all
-    #     把表建到旧 engine，alembic 反射 sessions 时抛 NoSuchTableError，
-    #     看着像"迁移坏了"其实是表建错了地方。
-    importlib.reload(app.config)
-    importlib.reload(app.database)
-    importlib.reload(app.models)
-    import app.database as database
-    import app.models as models
-    assert url in str(database.engine.url), f"engine 没指到临时库：{database.engine.url}"
-    assert database.Base is models.Base, "Base 不是同一个，表会建到别处"
-    assert "users" in models.Base.metadata.tables, "模型未注册到新 Base"
-    return url, database
+    monkeypatch.setenv("CG_DATABASE_URL", url)
+
+    dst = tmp_path / "alembic"
+    if not dst.exists():
+        shutil.copytree(ALEMBIC_SRC, dst)
+    return url, dst
+
+
+def _schema_ddl(conn):
+    """取当前库的全部建表与建索引语句（外键定义随表一起复制）"""
+    rows = conn.exec_driver_sql(
+        "SELECT type, name, sql FROM sqlite_master "
+        "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC, name"
+    ).fetchall()
+    return [(t, sql) for t, _n, sql in rows]
 
 
 def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
-    """真跑 upgrade/downgrade：建 0016 态的库 → 升到 head → 四列出现 → 降回去消失。
+    """真跑 upgrade：把现网 schema 快照到临时库、摘掉 0017 的四列，再让 alembic 补回来。
 
-    用 op.create_table 的 0016 在 SQLite 上会因缺 render_as_batch 而卡住，
-    所以不从零重建，而是 create_all 出近似 0016 的基线库、只删掉 0017 的四列，
-    再让 alembic 去补 —— 这正好复现现网情形：表早就在，缺的只是新列。
+    只作用在 tmp 的独立 engine 上，绝不碰 conftest 的内存库。
     """
     bad = _syntax_problems_in_versions()
     if bad:
-        pytest.skip("alembic 加载被坏迁移阻断（见 test_all_migration_files_are_loadable）："
-                    + "; ".join(n for n, _ in bad))
+        pytest.skip("alembic 加载被坏迁移阻断：" +
+                    "; ".join(f"{n}({r})" for n, r in bad))
 
     from alembic import command
-    from alembic.config import Config
-    url, database = _fresh_modules_with_url(tmp_path, monkeypatch)
-    engine = database.engine
+    from sqlalchemy import create_engine, text as sa_text
+    from tests._alembic_runner import run_upgrade
+
+    url, alembic_dst = _migration_cfg(tmp_path, monkeypatch)
     NEW_COLS = {"asr_provider", "asr_confidence", "low_confidence", "asr_duration_sec"}
 
-    # 一律直查 sqlite_master，不用 Inspector 反射：SA 2.x 的 Inspector 没有 clear()，
-    # 且会缓存"表不存在"这类否定结果（create_all 之前库里确实是空的），
-    # 于是建表之后仍抛 NoSuchTableError —— 一个看起来像"迁移坏了"的假失败。
     def _cols(conn, table):
+        """直查 sqlite_master：SA 2.x 的 Inspector 没有 clear()，且会缓存
+        "表不存在"这类否定结果，反射会造出假的 NoSuchTableError。"""
         row = conn.exec_driver_sql(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone()
@@ -260,42 +261,64 @@ def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
             (table,)).fetchall()}
 
-    # 基线：按 models 建全表，再一次性摘掉 0017 的四列，模拟"停在 0016 的存量库"
-    from sqlalchemy import text as sa_text
-    database.Base.metadata.create_all(engine)
-    with engine.begin() as conn:
-        all_cols = sorted(_cols(conn, "sessions"))
-        keep = [c for c in all_cols if c not in NEW_COLS]
-        assert len(keep) < len(all_cols), "没摘掉任何列，基线构造失败"
+    # 1) 以 conftest 建好的库为 schema 快照（含全部外键与索引）
+    from app.database import engine as pristine_engine
+    with pristine_engine.connect() as conn:
+        ddl = _schema_ddl(conn)
+    assert ddl, "取不到 schema，本用例失去意义"
+
+    # 2) 在全新临时文件库里重放
+    tmp_engine = create_engine(url)
+    with tmp_engine.begin() as conn:
+        for _type, stmt in ddl:
+            conn.exec_driver_sql(stmt)
+
+        # 3) 造"停在 0016"：重建 sessions（无新列）+ 版本标记
+        base_cols = [c for c in _cols(conn, "sessions") if c not in NEW_COLS]
+        assert base_cols, "sessions 没有可保留的列"
+        assert len(base_cols) >= 10, f"列数异常，快照可能不完整：{len(base_cols)}"
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        conn.exec_driver_sql("DROP TABLE IF EXISTS sessions")
         conn.exec_driver_sql(
-            "CREATE TABLE sessions_0016 AS SELECT {} FROM sessions".format(", ".join(keep)))
-        conn.exec_driver_sql("DROP TABLE sessions")
-        conn.exec_driver_sql("ALTER TABLE sessions_0016 RENAME TO sessions")
+            "CREATE TABLE sessions ("
+            "  id VARCHAR(36) PRIMARY KEY,"
+            "  user_id VARCHAR(36) REFERENCES users(id),"
+            "  {})".format(", ".join(
+                c + " " + ("TEXT" if c != "day_number" else "INTEGER")
+                for c in base_cols if c not in ("id", "user_id"))))
         conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS alembic_version "
                              "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
-        conn.execute(sa_text("DELETE FROM alembic_version"))
-        conn.execute(sa_text("INSERT INTO alembic_version VALUES ('0016')"))
-
-    with engine.connect() as conn:
+        conn.exec_driver_sql("DELETE FROM alembic_version")
+        conn.exec_driver_sql("INSERT INTO alembic_version VALUES ('0016')")
         cols_before = _cols(conn, "sessions")
-    assert not (NEW_COLS & cols_before), "基线库竟然已含新列，本用例失去意义"
+        assert not (NEW_COLS & cols_before), "基线竟已含新列，本用例失去意义"
 
-    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-    try:
-        command.upgrade(cfg, "head")
-    finally:
-        engine.dispose()
+    # 4) 真跑（子进程；runner 内部会断言 env.py 用的就是我给的临时库）
+    db_file = tmp_path / "mig.db"
+    proc = run_upgrade(db_file, INI_SRC, alembic_dst)
+    assert proc.returncode == 0, (
+        f"upgrade 失败 rc={proc.returncode}\n"
+        f"stderr: {proc.stderr[-800:]}"
+    )
+    assert f"TARGET={str(db_file).replace(chr(92), '/')}" in proc.stderr.replace("\\", "/"), \
+        "runner 未确认目标库，可能改到了别的数据库"
 
-    with database.engine.connect() as conn:
+    # 5) 断言
+    with tmp_engine.connect() as conn:
         cols_after = _cols(conn, "sessions")
         indexes = _idx(conn, "sessions")
         ver = conn.exec_driver_sql("SELECT version_num FROM alembic_version").fetchall()
+        # 其它表未被牵连：share_records 的外键目标仍在
+        conn.exec_driver_sql("INSERT INTO users (id, username, hashed_password, role)"
+                             " VALUES ('u-1','u1','x','elderly')")
+        conn.exec_driver_sql("INSERT INTO share_records (id, session_id, elderly_id,"
+                             " family_id) VALUES ('s-1','x','u-1','u-1')")
+    tmp_engine.dispose()
+
     missing = NEW_COLS - cols_after
     assert not missing, f"upgrade head 后仍缺列 {missing} —— 0017 未被应用"
     assert indexes, "0017 的 (user_id, created_at) 索引没建上"
     assert [v[0] for v in ver] == ["0017"], f"版本表未推进到 0017：{ver}"
-    database.engine.dispose()
 
 
 def test_alembic_head_is_0017():
