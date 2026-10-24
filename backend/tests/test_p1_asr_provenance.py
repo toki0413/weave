@@ -117,20 +117,32 @@ def test_migration_0017_metadata_and_callables():
     assert callable(mod.upgrade) and callable(mod.downgrade)
 
 
-def test_upstream_0014_is_truncated_known_defect():
-    """已知上游缺陷：0014 内容被截断，任何 alembic 全量升级都会挂。
+def test_0014_is_structurally_valid_guard():
+    """0014 曾是 68 字节的截断残檔，让 alembic 整个 versions/ 加载失败。
 
-    本用例断言的是"缺陷存在"，不是"已修复"。修好后它会失败，届时把断言反过来
-    变成守护测试，别直接删 —— 否则这条信息就又丢了。
+    现已按 no-op 占位重建（原因见该迁移文件的 docstring：models 里 username /
+    phone nullable 早已是最终形态，现存库都含这两项变更）。本用例是**结构守护**，
+    防止它再被截断或误删：
+      · 大小回到正常量级（截断的特征就是极小）
+      · ast 可解析
+      · revision / down_revision / upgrade / downgrade 齐备
     """
-    from pathlib import Path
+    import ast
 
-    p = (Path(__file__).resolve().parents[1]
-         / "alembic" / "versions" / "0014_add_username.py")
-    raw = p.read_bytes()
-    assert len(raw) < 200, f"0014 看起来已修好（{len(raw)} 字节），请把本断言改为守护"
-    text = raw.decode("utf-8", errors="replace")
-    assert text.count('"""') < 2, "docstring 未闭合"
+    p = VERSIONS_DIR / "0014_add_username.py"
+    src = p.read_text(encoding="utf-8")
+    assert len(src.encode("utf-8")) > 400, \
+        "0014 又变小了，疑似被截断 —— alembic 会加载失败，upgrade 永远跑不到 head"
+    tree = ast.parse(src)
+    names = {t.id for n in tree.body if isinstance(n, ast.Assign)
+             for t in n.targets if isinstance(t, ast.Name)}
+    funcs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert {"revision", "down_revision"} <= names, names
+    assert {"upgrade", "downgrade"} <= funcs, funcs
+    ns = {}
+    exec(compile(tree, str(p), "exec"), ns)
+    assert ns["revision"] == "0014"
+    assert ns["down_revision"] == "0013"
 
 
 # ------------------------------------------------------------------ 真跑 alembic
