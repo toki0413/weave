@@ -3,11 +3,20 @@
 import { el } from '../ui/components.js';
 import { listSessions, uploadAudio, sendWebSocketReadReceipt, isLoggedIn, createSession } from '../api/client.js';
 import { createVoiceEditor } from '../ui/voice-editor.js';
+import { planRecording } from '../audio/transcript-source.js';
 import { state } from '../state.js';
 import { connect as wsConnect, send as wsSend, isConnected } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 import { cacheMessages, getCachedMessages } from '../db/offline.js';
 import * as vs from '../3d/view-switcher.js';
+
+// story-7 主路径契约（PRD pilot-p0-repair）：
+// 浏览器 SpeechRecognition 只做实时预览；最终入库文本一律来自后端
+// provider 链（百炼→火山→vosk）转写结果，随会话写入 0018 溯源列。
+// 后端转写失败 → 重试卡（内存保底 blob），绝不静默用预览文本入库；
+// story-1 会把保底升级为 IndexedDB 离线补传。
+var _pendingBlob = null;   // 待补传的录音（内存保底）
+var _recording = false;    // SR / recorder 任一活动中
 
 export function renderElderlyMode(container) {
   container.innerHTML = '';
@@ -200,6 +209,17 @@ function renderVoiceArea() {
   }, '🎤 按住说话');
   wrap.appendChild(recBtn);
 
+  // SR 实时预览（仅预览，不是最终文本；后端转写结果到达后由编辑器取代）
+  var preview = el('div', {
+    id: 'elderly-voice-preview',
+    style: {
+      marginTop: '12px', minHeight: '1.5em', fontSize: '1.1rem',
+      color: 'var(--muted)', textAlign: 'left', lineHeight: '1.6',
+      display: 'none',
+    }
+  });
+  wrap.appendChild(preview);
+
   // 语音编辑器容器
   var editorContainer = el('div', {
     id: 'elderly-voice-editor',
@@ -210,87 +230,252 @@ function renderVoiceArea() {
   return wrap;
 }
 
+function _setBtnIdle(btn) {
+  btn.textContent = '🎤 按住说话';
+  btn.style.background = '';
+  btn.style.color = '';
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.style.cursor = 'pointer';
+}
+
+function _setBtnRecording(btn) {
+  btn.textContent = '🔴 录音中…（点击停止）';
+  btn.style.background = '#ffebee';
+  btn.style.color = '#c62828';
+}
+
+function _setBtnUploading(btn) {
+  btn.textContent = '正在转写，请稍候…';
+  btn.disabled = true;
+  btn.style.background = '';
+  btn.style.color = '';
+  btn.style.opacity = '0.7';
+  btn.style.cursor = 'wait';
+}
+
 function handleRecord() {
   var btn = document.getElementById('elderly-rec-btn');
   if (!btn) return;
 
   var speechSupported = 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
-  var mediaRecorderSupported = 'MediaRecorder' in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-  if (!speechSupported && !mediaRecorderSupported) {
-    alert('您的浏览器不支持语音输入');
+  var recorderSupported = 'MediaRecorder' in window && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+  var plan = planRecording(speechSupported, recorderSupported);
+
+  if (plan === 'manual') {
+    // SR-only 设备录不了音频：不伪装成"识别成功"。诚实降级为手动输入，
+    // 会话不带任何 ASR 溯源（0018 列 NULL = 未知）。
+    alert('当前浏览器录不了音频。可以直接打字告诉我，或换用 Chrome 浏览器。');
+    showManualInput();
     return;
   }
 
-  // 浏览器原生语音识别
-  if (speechSupported) {
-    if (window.__speech_rec__ && window.__speech_rec__.running) {
-      window.__speech_rec__.stop();
-      return;
-    }
+  if (_recording) {
+    stopRecording(btn, plan);
+    return;
+  }
+  startRecording(btn, plan);
+}
+
+function startRecording(btn, plan) {
+  _recording = true;
+  _setBtnRecording(btn);
+  var preview = document.getElementById('elderly-voice-preview');
+  if (preview) {
+    preview.style.display = 'block';
+    preview.textContent = '听着呢…（说出来的字会显示在这里）';
+  }
+
+  var sr = null;
+  if (plan === 'dual') {
     var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    var rec = new SpeechRecognition();
-    rec.lang = 'zh-CN';
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.running = false;
-    rec.onstart = function() {
-      rec.running = true;
-      window.__speech_rec__ = rec;
-      if (btn) { btn.textContent = '🔴 录音中…（点击停止）'; btn.style.background = '#ffebee'; btn.style.color = '#c62828'; }
-    };
-    rec.onresult = function(e) {
+    sr = new SpeechRecognition();
+    sr.lang = 'zh-CN';
+    sr.continuous = true;
+    sr.interimResults = true;
+    // SR 只做预览：onresult 只更新预览区文本，不重建编辑器
+    // （旧实现每个 interim 结果重建整个 voice-editor，会把老人改了一半的字清掉）
+    sr.onresult = function(e) {
+      var p = document.getElementById('elderly-voice-preview');
+      if (!p) return;
       var transcript = '';
       for (var i = e.resultIndex; i < e.results.length; i++) {
         transcript += e.results[i][0].transcript;
       }
-      showVoiceEditor(transcript, null);
+      p.textContent = transcript || '听着呢…';
     };
-    rec.onend = function() {
-      rec.running = false;
-      window.__speech_rec__ = null;
-      if (btn) { btn.textContent = '🎤 按住说话'; btn.style.background = ''; btn.style.color = ''; }
+    sr.onerror = function() {
+      // 预览死了不影响录音：MediaRecorder 仍在采集，后端转写仍是最终来源
+      var p = document.getElementById('elderly-voice-preview');
+      if (p && _recording) p.textContent = '（实时字幕暂不可用，仍在录音）';
     };
-    rec.onerror = function() {
-      rec.running = false;
-      window.__speech_rec__ = null;
-      if (btn) { btn.textContent = '🎤 按住说话'; btn.style.background = ''; btn.style.color = ''; }
+    sr.onend = function() {
+      sr = null;
     };
-    rec.start();
-    return;
+    try { sr.start(); } catch (e) { sr = null; }
   }
 
-  // MediaRecorder 回退
   import('../audio/recorder.js').then(function(mod) {
+    // 时长上限维持现状（30s/静默 1.5s 的对齐是 story-6，不在本批）
     var recorder = new mod.VoiceRecorder({ maxDuration: 30000, silenceTimeout: 1500 });
     recorder.onStart = function() {
-      if (btn) { btn.textContent = '🔴 录音中…（点击停止）'; btn.style.background = '#ffebee'; btn.style.color = '#c62828'; }
+      if (btn) _setBtnRecording(btn);
     };
     recorder.onStop = function(blob) {
-      if (btn) { btn.textContent = '🎤 按住说话'; btn.style.background = ''; btn.style.color = ''; }
-      uploadAudio(blob).then(function(result) {
-        var text = result.text || '';
-        var confidenceMap = result.confidence_map || result.words || null;
-        showVoiceEditor(text, confidenceMap);
-        if (result.audio_metrics) {
-          state.lastAudioMetrics = result.audio_metrics;
-        }
-      }).catch(function(err) {
-        console.error('STT upload failed:', err);
-        alert('语音识别失败，您可以手动输入文字。');
-      });
+      // 唯一的上传触发点：录音真正结束才进入转写，SR 仅为预览
+      _recording = false;
+      try { if (sr) { sr.onend = function() {}; sr.stop(); } } catch (e) {}
+      if (btn) _setBtnUploading(btn);
+      beginUpload(blob);
     };
     recorder.onError = function() {
-      if (btn) { btn.textContent = '🎤 按住说话'; btn.style.background = ''; btn.style.color = ''; }
+      _recording = false;
+      if (btn) _setBtnIdle(btn);
+      var p = document.getElementById('elderly-voice-preview');
+      if (p) { p.style.display = 'none'; }
     };
     recorder.start();
     btn._recorder = recorder;
+    btn._sr = sr;
   });
 }
 
-function showVoiceEditor(transcript, confidenceMap) {
+function stopRecording(btn, plan) {
+  _recording = false;
+  var rec = btn._recorder;
+  var sr = btn._sr;
+  try { if (sr) { sr.onend = function() {}; sr.stop(); } } catch (e) {}
+  if (rec) {
+    // recorder.onStop 回调里进入转写态（含按钮状态与上传）
+    try { rec.stop(); } catch (e) {
+      _setBtnIdle(btn);
+      var p = document.getElementById('elderly-voice-preview');
+      if (p) p.style.display = 'none';
+    }
+  } else {
+    // recorder 尚未就绪（点击太快）：无音频可传，回空闲态
+    _setBtnIdle(btn);
+    var p = document.getElementById('elderly-voice-preview');
+    if (p) p.style.display = 'none';
+  }
+  btn._recorder = null;
+  btn._sr = null;
+}
+
+function beginUpload(blob) {
+  var btn = document.getElementById('elderly-rec-btn');
+  var preview = document.getElementById('elderly-voice-preview');
+  if (preview) preview.style.display = 'none';
+  _pendingBlob = blob;   // 内存保底；story-1 升级为 IndexedDB
+  uploadAudio(blob).then(function(result) {
+    _pendingBlob = null;
+    if (btn) _setBtnIdle(btn);
+    if (result.audio_metrics) {
+      state.lastAudioMetrics = result.audio_metrics;
+    }
+    // 最终文本 = 后端转写结果（含词典热词与置信度），绝不是浏览器预览
+    showVoiceEditor(result.text || '', result.confidence_map || result.words || null, {
+      provider: result.source,
+      confidence: result.confidence,
+      audioMetrics: result.audio_metrics || null,
+    });
+  }).catch(function(err) {
+    console.error('STT upload failed:', err);
+    if (btn) _setBtnIdle(btn);
+    showRetryCard(blob);
+  });
+}
+
+function showRetryCard(blob) {
   var container = document.getElementById('elderly-voice-editor');
   if (!container) return;
   container.innerHTML = '';
+  var card = el('div', {
+    style: {
+      background: 'var(--bg2)', borderRadius: '12px', padding: '16px',
+      border: '2px solid var(--danger)',
+    }
+  });
+  card.appendChild(el('div', {
+    style: { fontSize: '1.15rem', color: 'var(--ink)', marginBottom: '12px', fontWeight: '700' }
+  }, '没听清，请再试一次'));
+  card.appendChild(el('div', {
+    style: { fontSize: '0.95rem', color: 'var(--muted)', marginBottom: '12px' }
+  }, '刚才说的话已经帮你留下了，不会丢。'));
+  var btnRow = el('div', { style: { display: 'flex', gap: '10px' } });
+  btnRow.appendChild(el('button', {
+    className: 'cg-btn btn-primary',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() {
+      container.innerHTML = '';
+      beginUpload(blob);
+    }
+  }, '再试一次'));
+  btnRow.appendChild(el('button', {
+    className: 'cg-btn',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() {
+      container.innerHTML = '';
+      _pendingBlob = null;
+      showManualInput();
+    }
+  }, '改用打字'));
+  card.appendChild(btnRow);
+  container.appendChild(card);
+}
+
+function showManualInput() {
+  var container = document.getElementById('elderly-voice-editor');
+  if (!container) return;
+  container.innerHTML = '';
+  var ta = el('textarea', {
+    style: {
+      width: '100%', minHeight: '110px', fontSize: '1.15rem', lineHeight: '1.7',
+      padding: '12px', borderRadius: '10px', border: '2px solid var(--border, #ccc)',
+      resize: 'vertical',
+    },
+    placeholder: '在这里把刚才想说的话打出来…'
+  });
+  container.appendChild(ta);
+  container.appendChild(el('div', { style: { marginTop: '10px' } }, [
+    el('button', {
+      className: 'cg-btn btn-primary',
+      style: { fontSize: '1.1rem', padding: '0.7rem 1.4rem' },
+      onclick: function() {
+        var text = (ta.value || '').trim();
+        if (!text) { ta.focus(); return; }
+        container.innerHTML = '';
+        // 手动输入：无音频无 ASR —— 溯源列保持 NULL（未知），不编造
+        submitSession(text, null, null);
+      }
+    }, '保存这条回忆'),
+  ]));
+  ta.focus();
+}
+
+function submitSession(text, audioMetrics, asrInfo) {
+  // day_number 传 0 = 未指定哨兵，由后端按首条会话日起算（story-8）
+  createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
+    var content = document.getElementById('elderly-memory-content');
+    if (content) content.textContent = text;
+    // 顺带堵掉旧版静默吞错（完整三态保存反馈归 story-2）
+  }).catch(function() {
+    alert('没存上，请再试一次。');
+  });
+}
+
+function showVoiceEditor(transcript, confidenceMap, asrInfo) {
+  var container = document.getElementById('elderly-voice-editor');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // 置信度标注：后端启发式置信度低于阈值时，提示可修改（标量无词级映射，
+  // 词级高亮等 provider 支持后再加）
+  if (asrInfo && asrInfo.confidence != null && asrInfo.confidence < 0.5) {
+    container.appendChild(el('div', {
+      style: { fontSize: '0.95rem', color: 'var(--muted)', marginBottom: '8px' }
+    }, '有些字可能没听准，下面的文字可以改一改。'));
+  }
 
   var editor = createVoiceEditor(transcript, confidenceMap);
   container.appendChild(editor);
@@ -303,7 +488,10 @@ function showVoiceEditor(transcript, confidenceMap) {
     if (content) content.textContent = text;
     // 提交到后端（如果有登录）
     if (isLoggedIn()) {
-      createSession(0, text).catch(function() {});
+      submitSession(text, asrInfo ? asrInfo.audioMetrics : null, asrInfo ? {
+        asr_provider: asrInfo.provider,
+        asr_confidence: asrInfo.confidence,
+      } : null);
     }
   };
 
@@ -313,7 +501,10 @@ function showVoiceEditor(transcript, confidenceMap) {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
     if (isLoggedIn()) {
-      createSession(0, text).catch(function() {});
+      submitSession(text, asrInfo ? asrInfo.audioMetrics : null, asrInfo ? {
+        asr_provider: asrInfo.provider,
+        asr_confidence: asrInfo.confidence,
+      } : null);
     }
   };
 }

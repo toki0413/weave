@@ -24,6 +24,32 @@ from app.services import key_manager
 
 router = APIRouter(prefix="/session", tags=["session"])
 
+# low_confidence 判定阈值：stt.py 的启发式置信度（字符密度线性映射，0-1）低于
+# 此值视为低置信。这是拍的试点参数，不是标定值——试点期 low_confidence 的
+# 真实分布会告诉我们该定在哪（见 weekly_baseline / baseline_personal 的剔除逻辑）。
+LOW_CONFIDENCE_THRESHOLD = 0.5
+
+
+def _compute_day_number(db: Session, user_id: str) -> int:
+    """"参加的第 N 天"：首条会话日到今天（UTC 日历差）+ 1，首条即第 1 天。
+
+    day_number <= 0 是前端"未指定"哨兵（老人端此前恒传 0），此时由后端计算，
+    单一事实源、与 pilot_export 的周桶互不依赖。显式 >0 的值照旧透传
+    （full 模式的 parse.js 自算天数、测试 seeding）。
+    已知局限：按 UTC 日历日切天，对 UTC+8 用户在 0:00-8:00 之间与直觉差一天；
+    day_number 只作进度展示，不承载数据合同（周桶按 created_at 分桶），可接受。
+    """
+    first = (
+        db.query(DBSession.created_at)
+        .filter(DBSession.user_id == user_id)
+        .order_by(DBSession.created_at.asc())
+        .first()
+    )
+    if first is None or first[0] is None:
+        return 1
+    now = datetime.now(timezone.utc)
+    return max(1, (now.date() - first[0].date()).days + 1)
+
 
 def _load_custom_words(db: Session, user_id: str):
     """从数据库加载该用户的自定义词典，转成 NLP 服务需要的格式"""
@@ -83,8 +109,12 @@ def create_session(
         metrics["audio"] = data.audio_metrics
 
     # 时间实体解析：若存在历史时间引用且 day_number 为默认值 1，自动调整
+    # day_number <= 0 视为"未指定"（老人端哨兵），由后端按首条会话日起算
     temporal_refs = nlp_result.get("temporal_references", [])
-    day_number = data.day_number
+    if data.day_number <= 0:
+        day_number = _compute_day_number(db, current_user.id)
+    else:
+        day_number = data.day_number
     if temporal_refs and day_number == 1:
         max_day_row = (
             db.query(DBSession)
@@ -159,6 +189,23 @@ def create_session(
         emotion_label=nlp_result["emotion"]["overall"],
         # 来源归因（日课漏斗第三步）：白名单外一律记 manual
         source=data.source if data.source in ("daily_prompt", "manual", "share", "import") else "manual",
+        # ASR 溯源（0018）：只在真走过 /stt/transcribe 时才有值；
+        # 手动输入/浏览器无音频路径不传 → 保持 NULL（"未知"），不编造。
+        # low_confidence 三态：True 低置信 / False 已知可信 / NULL 无 ASR（未知），
+        #   剔除逻辑只认 True（baseline_personal），NULL 绝不当 False 用。
+        # asr_duration_sec 取音频指标的时长；无音频则 NULL。
+        asr_provider=(data.asr_provider or "").strip()[:20] or None,
+        asr_confidence=data.asr_confidence,
+        low_confidence=(
+            bool(data.asr_confidence < LOW_CONFIDENCE_THRESHOLD)
+            if data.asr_confidence is not None
+            else None
+        ),
+        asr_duration_sec=(
+            float(data.audio_metrics["duration_sec"])
+            if data.audio_metrics and data.audio_metrics.get("duration_sec") is not None
+            else None
+        ),
     )
     db.add(db_session)
     db.commit()

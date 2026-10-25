@@ -418,9 +418,16 @@ export async function logout() {
 }
 export function isLoggedIn() { return !!getToken(); }
 
-export async function createSession(dayNumber, text, dialect = 'mandarin', audioMetrics = null) {
+export async function createSession(dayNumber, text, dialect = 'mandarin', audioMetrics = null, asr = null) {
   const body = { day_number: dayNumber, narrative_input: { text, dialect } };
   if (audioMetrics) body.audio_metrics = audioMetrics;
+  // ASR 溯源（0018 列）：dayNumber 传 0 = 未指定，由后端按首条会话日起算；
+  // asr = { asr_provider, asr_confidence }，来自 /stt/transcribe 响应。
+  // 手动输入不传 asr —— 溯源列保持 NULL（未知），不编造。
+  if (asr) {
+    if (asr.asr_provider) body.asr_provider = asr.asr_provider;
+    if (asr.asr_confidence != null) body.asr_confidence = asr.asr_confidence;
+  }
   if (_sessionSource) body.source = _sessionSource;
   const result = await apiFetch('/session/', { method: 'POST', body });
   if (_sessionSource) {
