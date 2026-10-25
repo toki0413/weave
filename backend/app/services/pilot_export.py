@@ -97,7 +97,7 @@ def build_week_rows(
                 usable -= dec_fail        # 解不开的不进特征，不算进有效数据
 
             # 只有在明确标注 provider_missing_after_asr 时才计入，避免把
-            # "0017 之前的存量记录（该列全 NULL）"误报成"ASR 全都失败了"
+            # "0018 之前的存量记录（该列全 NULL）"误报成"ASR 全都失败了"
             asr_fail = sum(1 for it in items if it.get("provider_missing_after_asr"))
             no_narrative = sum(1 for it in items if not it.get("has_narrative", True))
             rate = (len(days) / expected) if expected > 0 else 0.0

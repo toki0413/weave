@@ -14,7 +14,7 @@
 
 为什么要链而不是 if/else：主 provider 失败（网络不可达、配额、超时）时
 应静默落到下一个，而不是报 503 让老人看到错误页。链由 config.asr_provider
-决定顺序，vosk 永远是末位兜底。
+决定主位，配置齐备的火山在线补位（方言盲区），vosk 永远是末位兜底。
 """
 from __future__ import annotations
 
@@ -58,14 +58,23 @@ class ASRProvider(Protocol):
 
 
 def resolve_chain(provider_setting: str, settings) -> List[ASRProvider]:
-    """按配置返回 provider 优先级链。vosk 永远在末位兜底。"""
+    """按配置返回 provider 优先级链。vosk 永远在末位兜底。
+
+    火山收编（原 48ca95a 内联版的语义并入链）：主 provider 失败时，
+    已配置的火山在线补位（方言/口音是离线小模型的盲区），最后落 vosk。
+    各节点 available() 自筛：没配百炼密钥或火山三项配置不齐的，
+    链上自动缺席，行为退化为 vosk-only。
+    """
     from app.services.asr_providers.bailian import BailianProvider
+    from app.services.asr_providers.volc import VolcProvider
     from app.services.asr_providers.vosk import VoskProvider
 
     vosk = VoskProvider(settings)
     bailian = BailianProvider(settings)
+    volc = VolcProvider(settings)
     chains = {
-        "bailian": [bailian, vosk],
+        "bailian": [bailian, volc, vosk],
+        "volc": [volc, vosk],
         "vosk": [vosk],
         "none": [],
     }

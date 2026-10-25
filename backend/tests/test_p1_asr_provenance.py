@@ -1,7 +1,7 @@
 """P1 试点数据契约回归
 
 覆盖两件事：
-1. 0017 迁移在 SQLite 上可上可下（batch_alter_table 路径）。
+1. 0018 迁移在 SQLite 上可上可下（batch_alter_table 路径）。
 2. build_personal_baseline 只剔除 low_confidence is True 的记录；
    NULL（旧数据、未知）必须保留 —— 把它当 False 是替历史作保，
    把它当 True 会静默清空存量用户的基线。
@@ -96,8 +96,8 @@ def test_all_low_confidence_degrades_to_no_baseline(db_session):
     assert build_personal_baseline(u.id, db_session, sample_size=7) is None
 
 
-def test_migration_0017_metadata_and_callables():
-    """只验 0017 自身。
+def test_migration_0018_metadata_and_callables():
+    """只验 0018 自身（曾编号 0017，与远端 0017_memory_card_shares 撞号后重编）。
 
     不走 ScriptDirectory.from_config()：仓库里的 0014_add_username.py 是被截断
     的 68 字节残檔（末行停在 "Revis"，三引号只出现 1 次），加载整个 versions
@@ -107,13 +107,13 @@ def test_migration_0017_metadata_and_callables():
     from pathlib import Path
 
     path = (Path(__file__).resolve().parents[1]
-            / "alembic" / "versions" / "0017_asr_provenance.py")
-    spec = importlib.util.spec_from_file_location("m0017", path)
+            / "alembic" / "versions" / "0018_asr_provenance.py")
+    spec = importlib.util.spec_from_file_location("m0018", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
-    assert mod.revision == "0017"
-    assert mod.down_revision == "0016"
+    assert mod.revision == "0018"
+    assert mod.down_revision == "0017"
     assert callable(mod.upgrade) and callable(mod.downgrade)
 
 
@@ -149,8 +149,8 @@ def test_0014_is_structurally_valid_guard():
 #
 # 为什么必须单独有这一条：本文件其余用例的表都由 conftest 的
 # Base.metadata.create_all 建立，**完全绕开 alembic**。所以曾出现
-# "199 全绿、但 0017 在存量库上根本不会被应用"的情况 —— create_all 对已存在的
-# 表是跳过的，而那四列恰恰要靠 0017 加。断言列存在不等于跑过迁移。
+# "199 全绿、但 0018 在存量库上根本不会被应用"的情况 —— create_all 对已存在的
+# 表是跳过的，而那四列恰恰要靠 0018 加。断言列存在不等于跑过迁移。
 
 import shutil                                            # noqa: E402
 from pathlib import Path                               # noqa: E402
@@ -224,8 +224,51 @@ def _schema_ddl(conn):
     return [(t, sql) for t, _n, sql in rows]
 
 
-def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
-    """真跑 upgrade：把现网 schema 快照到临时库、摘掉 0017 的四列，再让 alembic 补回来。
+NEW_COLS = {"asr_provider", "asr_confidence", "low_confidence", "asr_duration_sec"}
+
+
+def _cols(conn, table):
+    """直查 sqlite_master：SA 2.x 的 Inspector 没有 clear()，且会缓存
+    "表不存在"这类否定结果，反射会造出假的 NoSuchTableError。"""
+    row = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    if row is None or not row[0]:
+        return set()
+    out = set()
+    for ln in row[0].split("(", 1)[1].split(","):
+        tok = ln.strip().split()
+        if tok and tok[0].upper() not in ("PRIMARY", "UNIQUE", "FOREIGN", "CHECK"):
+            out.add(tok[0].strip('"'))
+    return out
+
+
+def _idx(conn, table):
+    return {r[0] for r in conn.exec_driver_sql(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+        (table,)).fetchall()}
+
+
+def _rebuild_sessions_without(conn, drop_cols):
+    """按快照列重建一个不含 drop_cols 的 sessions —— 造"迁移前"的存量形态。
+    顺带关外键再换表，避免 DROP 时被引用拦下。"""
+    base_cols = [c for c in _cols(conn, "sessions") if c not in drop_cols]
+    assert base_cols, "sessions 没有可保留的列"
+    assert len(base_cols) >= 10, f"列数异常，快照可能不完整：{len(base_cols)}"
+    conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    conn.exec_driver_sql("DROP TABLE IF EXISTS sessions")
+    conn.exec_driver_sql(
+        "CREATE TABLE sessions ("
+        "  id VARCHAR(36) PRIMARY KEY,"
+        "  user_id VARCHAR(36) REFERENCES users(id),"
+        "  {})".format(", ".join(
+            c + " " + ("TEXT" if c != "day_number" else "INTEGER")
+            for c in base_cols if c not in ("id", "user_id"))))
+    return base_cols
+
+
+def test_real_alembic_upgrade_adds_0018_columns(tmp_path, monkeypatch):
+    """真跑 upgrade：把现网 schema 快照到临时库、摘掉 0018 的四列，再让 alembic 补回来。
 
     只作用在 tmp 的独立 engine 上，绝不碰 conftest 的内存库。
     """
@@ -239,27 +282,6 @@ def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
     from tests._alembic_runner import run_upgrade
 
     url, alembic_dst = _migration_cfg(tmp_path, monkeypatch)
-    NEW_COLS = {"asr_provider", "asr_confidence", "low_confidence", "asr_duration_sec"}
-
-    def _cols(conn, table):
-        """直查 sqlite_master：SA 2.x 的 Inspector 没有 clear()，且会缓存
-        "表不存在"这类否定结果，反射会造出假的 NoSuchTableError。"""
-        row = conn.exec_driver_sql(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
-        if row is None or not row[0]:
-            return set()
-        out = set()
-        for ln in row[0].split("(", 1)[1].split(","):
-            tok = ln.strip().split()
-            if tok and tok[0].upper() not in ("PRIMARY", "UNIQUE", "FOREIGN", "CHECK"):
-                out.add(tok[0].strip('"'))
-        return out
-
-    def _idx(conn, table):
-        return {r[0] for r in conn.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
-            (table,)).fetchall()}
 
     # 1) 以 conftest 建好的库为 schema 快照（含全部外键与索引）
     from app.database import engine as pristine_engine
@@ -273,23 +295,14 @@ def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
         for _type, stmt in ddl:
             conn.exec_driver_sql(stmt)
 
-        # 3) 造"停在 0016"：重建 sessions（无新列）+ 版本标记
-        base_cols = [c for c in _cols(conn, "sessions") if c not in NEW_COLS]
-        assert base_cols, "sessions 没有可保留的列"
-        assert len(base_cols) >= 10, f"列数异常，快照可能不完整：{len(base_cols)}"
-        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
-        conn.exec_driver_sql("DROP TABLE IF EXISTS sessions")
-        conn.exec_driver_sql(
-            "CREATE TABLE sessions ("
-            "  id VARCHAR(36) PRIMARY KEY,"
-            "  user_id VARCHAR(36) REFERENCES users(id),"
-            "  {})".format(", ".join(
-                c + " " + ("TEXT" if c != "day_number" else "INTEGER")
-                for c in base_cols if c not in ("id", "user_id"))))
+        # 3) 造"停在 0017"：重建 sessions（无新列）+ 版本标记。
+        #    曾戳 0016；远端 0017_memory_card_shares 并入后，provenance 的
+        #    前一位是 0017，快照里那张表已存在，从 0016 起跑会重建撞车。
+        _rebuild_sessions_without(conn, NEW_COLS)
         conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS alembic_version "
                              "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
         conn.exec_driver_sql("DELETE FROM alembic_version")
-        conn.exec_driver_sql("INSERT INTO alembic_version VALUES ('0016')")
+        conn.exec_driver_sql("INSERT INTO alembic_version VALUES ('0017')")
         cols_before = _cols(conn, "sessions")
         assert not (NEW_COLS & cols_before), "基线竟已含新列，本用例失去意义"
 
@@ -316,13 +329,13 @@ def test_real_alembic_upgrade_adds_0017_columns(tmp_path, monkeypatch):
     tmp_engine.dispose()
 
     missing = NEW_COLS - cols_after
-    assert not missing, f"upgrade head 后仍缺列 {missing} —— 0017 未被应用"
-    assert indexes, "0017 的 (user_id, created_at) 索引没建上"
-    assert [v[0] for v in ver] == ["0017"], f"版本表未推进到 0017：{ver}"
+    assert not missing, f"upgrade head 后仍缺列 {missing} —— 0018 未被应用"
+    assert indexes, "0018 的 (user_id, created_at) 索引没建上"
+    assert [v[0] for v in ver] == ["0018"], f"版本表未推进到 0018：{ver}"
 
 
-def test_alembic_head_is_0017():
-    """alembic 认到的 head 必须是 0017，否则新列在任何真实部署上都不会出现。"""
+def test_alembic_head_is_0018():
+    """alembic 认到的 head 必须是 0018，否则新列在任何真实部署上都不会出现。"""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -333,5 +346,56 @@ def test_alembic_head_is_0017():
 
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_current_head() == "0017"
+    assert ScriptDirectory.from_config(cfg).get_current_head() == "0018"
+
+
+def test_real_alembic_upgrade_from_0016_full_chain(tmp_path, monkeypatch):
+    """存量库全程跑：戳 0016、快照里摘掉 memory_card_shares，让
+    0017(远端并入) → 0018(本地) 连续应用。守的是"合并后的链在
+    老库上能一路到 head"，远端那张表的可重建性也顺带钉住。"""
+    bad = _syntax_problems_in_versions()
+    if bad:
+        pytest.skip("alembic 加载被坏迁移阻断：" +
+                    "; ".join(f"{n}({r})" for n, r in bad))
+
+    from sqlalchemy import create_engine
+    from tests._alembic_runner import run_upgrade
+
+    url, alembic_dst = _migration_cfg(tmp_path, monkeypatch)
+
+    from app.database import engine as pristine_engine
+    # 摘掉该表的建表**和建索引**语句（0017 里 index=True 会生成
+    # ix_memory_card_shares_*，只摘表会让索引重放时撞 "no such table"）
+    with pristine_engine.connect() as conn:
+        ddl = [r for r in _schema_ddl(conn)
+               if "memory_card_shares" not in r[1]]
+    assert ddl, "取不到 schema，本用例失去意义"
+
+    tmp_engine = create_engine(url)
+    with tmp_engine.begin() as conn:
+        for _type, stmt in ddl:
+            conn.exec_driver_sql(stmt)
+        # 快照按当前 models 建的，sessions 已含四列；存量 0016 库没有，
+        # 须摘掉，否则 0018 的 ADD COLUMN 撞 duplicate column
+        _rebuild_sessions_without(conn, NEW_COLS)
+        conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS alembic_version "
+                             "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
+        conn.exec_driver_sql("DELETE FROM alembic_version")
+        conn.exec_driver_sql("INSERT INTO alembic_version VALUES ('0016')")
+
+    db_file = tmp_path / "mig.db"
+    proc = run_upgrade(db_file, INI_SRC, alembic_dst)
+    assert proc.returncode == 0, (
+        f"upgrade 失败 rc={proc.returncode}\n"
+        f"stderr: {proc.stderr[-800:]}"
+    )
+
+    with tmp_engine.connect() as conn:
+        has_card = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_card_shares'"
+        ).fetchone()
+        assert has_card, "0017 未在存量库上重建 memory_card_shares"
+        ver = conn.exec_driver_sql("SELECT version_num FROM alembic_version").fetchall()
+        assert [v[0] for v in ver] == ["0018"], f"版本表未推进到 0018：{ver}"
+    tmp_engine.dispose()
 

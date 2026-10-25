@@ -10,9 +10,10 @@ from app.services.asr_providers import (
     resolve_chain,
 )
 from app.services.asr_providers.bailian import BailianProvider
+from app.services.asr_providers.volc import VolcProvider
 
 
-def _settings(provider="vosk", bailian_key="", **kw):
+def _settings(provider="vosk", bailian_key="", volc_configured=False, **kw):
     s = MagicMock()
     s.asr_provider = provider
     s.asr_model_path = ""            # vosk available() → False（没模型文件）
@@ -23,6 +24,10 @@ def _settings(provider="vosk", bailian_key="", **kw):
     s.bailian_base_url = ""
     s.bailian_region = "cn-beijing"
     s.bailian_workspace_id = "ws-test"
+    s.asr_volc_app_id = "app-test" if volc_configured else ""
+    s.asr_volc_token = "tok-test" if volc_configured else ""
+    s.asr_volc_cluster = "cluster-test" if volc_configured else ""
+    s.asr_volc_timeout = 15.0
     for k, v in kw.items():
         setattr(s, k, v)
     return s
@@ -167,5 +172,88 @@ def test_bailian_context_system_message_included():
         msgs = captured["body"]["messages"]
         assert msgs[0]["role"] == "system"
         assert "秀兰" in msgs[0]["content"]
+    finally:
+        os.unlink(wav)
+
+
+# ---------------------------------------------------------------- 火山收编
+# 远端 48ca95a 的内联 volc→google 降级并入 provider 链。协议层行为由
+# test_volc_asr.py（FakeWS 钉帧结构）覆盖；这里只测包装层与链解析。
+
+def test_volc_unconfigured_self_excludes_from_bailian_chain():
+    """火山三项配置不齐 → 链上自动缺席，行为等同 [bailian] → vosk。"""
+    s = _settings(provider="bailian", bailian_key="sk-test")   # volc 为空
+    with patch("app.services.asr_providers.vosk.VoskProvider.available", return_value=False):
+        chain = resolve_chain("bailian", s)
+    assert [p.name for p in chain] == ["bailian"]
+
+
+def test_volc_configured_joins_between_bailian_and_vosk():
+    """主位百炼 + 火山已配置 → [bailian, volc]（vosk 无模型缺席）。
+    火山在线补位语义：方言/口音是离线小模型盲区。"""
+    s = _settings(provider="bailian", bailian_key="sk-test", volc_configured=True)
+    with patch("app.services.asr_providers.vosk.VoskProvider.available", return_value=False):
+        chain = resolve_chain("bailian", s)
+    assert [p.name for p in chain] == ["bailian", "volc"]
+
+
+def test_volc_primary_chain():
+    s = _settings(provider="volc", volc_configured=True)
+    with patch("app.services.asr_providers.vosk.VoskProvider.available", return_value=False):
+        chain = resolve_chain("volc", s)
+    assert [p.name for p in chain] == ["volc"]
+
+
+def test_volc_availability_requires_all_three_settings():
+    assert VolcProvider(_settings(volc_configured=False)).available() is False
+    partial = _settings()
+    partial.asr_volc_app_id = "app"
+    partial.asr_volc_token = "tok"          # cluster 仍为空
+    assert VolcProvider(partial).available() is False
+    assert VolcProvider(_settings(volc_configured=True)).available() is True
+
+
+def test_volc_transcribe_success_error_and_empty():
+    import tempfile, os
+    s = _settings(volc_configured=True)
+    p = VolcProvider(s)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(b"\x00" * 100)
+        wav = f.name
+    try:
+        with patch("app.services.volc_asr.transcribe_wav", return_value="今天陪秀兰去公园"):
+            r = p.transcribe(wav, ["秀兰"], "zh")
+        assert r.ok and r.provider == "volc"
+        assert "秀兰" in r.text and r.model == "cluster-test"
+
+        with patch("app.services.volc_asr.transcribe_wav",
+                   side_effect=RuntimeError("handshake timeout")):
+            r2 = p.transcribe(wav, [], None)
+        assert not r2.ok and "handshake timeout" in r2.error
+
+        with patch("app.services.volc_asr.transcribe_wav", return_value=""):
+            r3 = p.transcribe(wav, [], None)
+        assert not r3.ok and "未识别到内容" in r3.error
+    finally:
+        os.unlink(wav)
+
+
+def test_volc_timeout_config_passed_through():
+    import tempfile, os
+    s = _settings(volc_configured=True, asr_volc_timeout=7.5)
+    p = VolcProvider(s)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(b"\x00" * 100)
+        wav = f.name
+    captured = {}
+    def fake_wav(wav_path, app_id, token, cluster, timeout=15):
+        captured["timeout"] = timeout
+        captured["args"] = (app_id, token, cluster)
+        return "文本"
+    try:
+        with patch("app.services.volc_asr.transcribe_wav", new=fake_wav):
+            p.transcribe(wav, [], None)
+        assert captured["timeout"] == 7.5
+        assert captured["args"] == ("app-test", "tok-test", "cluster-test")
     finally:
         os.unlink(wav)

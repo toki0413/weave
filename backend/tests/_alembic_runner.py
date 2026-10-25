@@ -23,6 +23,10 @@ def run_upgrade(db_file, ini, script_location):
         [sys.executable, "-m", "tests._alembic_runner",
          str(ini), str(script_location), str(db_file)],
         cwd=str(BACKEND), capture_output=True, text=True, encoding="utf-8",
+        # errors="replace"：子进程 stderr 可能混入 Windows 控制台编码（GBK）
+        # 的中文，严格解码会让 subprocess 的读取线程崩掉、stderr 变 None，
+        # 真正的失败原因随之被吞 —— 曾让下面的断言炸出 TypeError 而非报错本体
+        errors="replace",
         env={**os.environ, "PYTHONPATH": str(BACKEND)},
     )
 

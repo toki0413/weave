@@ -1,8 +1,14 @@
-"""语音识别路由：provider 链调度（bailian→vosk 或 vosk-only），离线优先。
+"""语音识别路由：provider 链调度，离线优先。
+
+链形态（resolve_chain，各节点 available() 自筛缺席）：
+- 主位 asr_provider=bailian → [bailian, volc, vosk]
+- 主位 volc → [volc, vosk]；主位 vosk → [vosk]；none → []
+火山收编自远端 48ca95a 的内联实现（方言/口音是离线小模型盲区，
+在线第二意见），协议层见 services/volc_asr.py。
 
 词典热词：/stt/transcribe 需登录，从当前用户 custom_lexicon 拉热词，
 经 provider.transcribe(wav, context_words, lang) 传入链上百炼的 system
-context（vosk 忽略该参数）。链的组装见 services/asr_providers/resolve_chain。
+context（vosk / volc 忽略该参数）。
 """
 import os
 import wave
@@ -147,9 +153,8 @@ async def transcribe_audio(
     """接收音频文件，返回中文语音识别结果 + 语音认知指标。
 
     需登录：词典热词按当前用户拉取，喂给链上百炼的 system context
-    （vosk 忽略该参数）。Provider 链：asr_provider=bailian 时
-    [bailian, vosk]，vosk 时 [vosk]。链式降级：主 provider 失败静默
-    落下一个，都不行才 503。confidence 是启发式（字符密度 + 词典命中率），
+    （vosk / volc 忽略该参数）。链式降级：主 provider 失败静默落下一个，
+    都不行才 503。confidence 是启发式（字符密度 + 词典命中率），
     不是 provider 返回的：qwen3-asr-flash 不返回置信度，两者都是编的。
     """
     if not audio.content_type or not audio.content_type.startswith("audio/"):
@@ -209,8 +214,9 @@ def _get_lexicon_words(db: Session, user_id: str, limit: int = 200) -> List[str]
 
     词典表没有命中计数字段，"最近加的" 是 "用户当前在意" 的最好可得代理；
     build_context_message 再按字符数截断，落掉的是最早加的词。
-    vosk 不消费该参数（Kaldi 小模型无热词机制）；分词侧词典在 nlp.py，
-    走的是会话创建时的另一条传参路径，与这里互不影响。
+    vosk 不消费该参数（Kaldi 小模型无热词机制），volc 的一句话识别协议
+    也没有热词字段；分词侧词典在 nlp.py，走的是会话创建时的另一条传参
+    路径，与这里互不影响。
     """
     rows = (
         db.query(CustomLexicon.word)

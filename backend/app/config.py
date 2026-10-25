@@ -57,13 +57,14 @@ class Settings(BaseSettings):
     kms_key_id: str = ""            # aws 模式下的 KMS key ID
     kms_aws_region: str = ""        # aws 区域
 
-    # ASR (离线优先，Vosk 为默认引擎；配了百炼密钥则走 [bailian, vosk] 链)
-    asr_provider: str = "vosk"  # vosk | bailian | none
+    # ASR (离线优先，Vosk 为默认引擎；链式降级见 services/asr_providers)
+    asr_provider: str = "vosk"  # vosk | bailian | volc | none
     asr_model_path: str = ""
     # 火山引擎一句话识别（豆包语音同源，官方场景含老人方言对话）；三项齐备才启用
     asr_volc_app_id: str = ""
     asr_volc_token: str = ""
     asr_volc_cluster: str = ""
+    asr_volc_timeout: float = 15.0   # WebSocket 单次识别超时（原内联版硬编码值）
     # Google 在线降级：境内网络不可达，默认关闭；部署方显式开启后才走在线降级
     stt_online_fallback: bool = False
 

@@ -1,8 +1,12 @@
 """sessions ASR provenance columns (pilot data contract)
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0018
+Revises: 0017
 Create Date: 2026-10-20 00:00:00
+
+编号说明：本迁移 authored 时为 0017；与远端 48ca95a 的
+0017_memory_card_shares 在 rebase 时撞号（双方 down_revision 都是 0016），
+重编号为 0018 保持单一 alembic 头。
 
 四列一律可空、不给默认值。理由：Vosk 路径下没有真实置信度
 （routers/stt.py 里 vosk 返回硬编码 0.9、google 硬编码 1.0），
@@ -13,8 +17,8 @@ Create Date: 2026-10-20 00:00:00
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0017"
-down_revision = "0016"
+revision = "0018"
+down_revision = "0017"
 branch_labels = None
 depends_on = None
 
