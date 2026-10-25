@@ -241,7 +241,7 @@ def get_current_user(
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="登录状态已失效，请重新登录",
     )
     token = credentials.credentials if credentials else None
     if not token:
@@ -355,7 +355,7 @@ def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
             status_code=401,
             details={"identifier": user.identifier},
         )
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="手机号或密码不正确")
 
     _cache_user_keys(db_user, user.password)
     db.commit()

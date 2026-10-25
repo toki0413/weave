@@ -1,4 +1,5 @@
 import { showOfflineToast, clearOfflineToast } from '../ui/toast.js';
+import { normalizeErrorDetail } from './error-copy.js';
 import {
   enqueueOffline,
   syncOfflineQueue,
@@ -193,7 +194,7 @@ async function apiFetch(path, options = {}) {
     }
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw new Error(normalizeErrorDetail(error.detail, response.status));
     }
     const data = await response.json();
     if (isRead && options.cache) {
@@ -464,7 +465,7 @@ export async function healthCheck() {
     clearOfflineToast();
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-      throw new Error(error.detail || `HTTP ${response.status}`);
+      throw new Error(normalizeErrorDetail(error.detail, response.status));
     }
     return await response.json();
   } catch (err) {
@@ -498,7 +499,7 @@ export async function exportLogs() {
   const response = await fetch(url, { method: 'GET', headers });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: '导出日志失败' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(normalizeErrorDetail(error.detail, response.status));
   }
   const blob = await response.blob();
   const blobUrl = URL.createObjectURL(blob);
@@ -517,7 +518,7 @@ export async function exportBackup() {
   const response = await fetch(url, { method: 'GET', headers });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: '导出失败' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(normalizeErrorDetail(error.detail, response.status));
   }
   const blob = await response.blob();
   // 触发下载
@@ -539,7 +540,7 @@ export async function importBackup(file) {
   const response = await fetch(url, { method: 'POST', headers, body: formData });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: '导入失败' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(normalizeErrorDetail(error.detail, response.status));
   }
   return await response.json();
 }
@@ -552,10 +553,21 @@ export async function uploadAudio(blob) {
   const token = getToken();
   const headers = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const response = await fetch(url, { method: 'POST', headers, body: formData });
+  // story-5：30 秒超时，不再无限挂起——超时抛人话错误，由调用方出重试卡
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  let response;
+  try {
+    response = await fetch(url, { method: 'POST', headers, body: formData, signal: controller.signal });
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('网络有点慢，请再试一次');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'STT failed' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    throw new Error(normalizeErrorDetail(error.detail, response.status));
   }
   return await response.json();
 }

@@ -169,7 +169,9 @@ async def transcribe_audio(
     wav_path = tmp_path.rsplit(".", 1)[0] + "_16k.wav"
     try:
         if not _convert_to_wav(tmp_path, wav_path):
-            raise HTTPException(status_code=500, detail="音频格式转换失败，请确保已安装 ffmpeg")
+            # ffmpeg 等部署细节只进日志（_convert_to_wav 已记），给用户的是可行动的人话
+            logger.error("音频转换失败，用户侧返回兜底文案")
+            raise HTTPException(status_code=500, detail="语音服务暂时开小差了，请稍后再试")
 
         settings = get_settings()
         chain = resolve_chain(settings.asr_provider, settings)
@@ -197,8 +199,10 @@ async def transcribe_audio(
                 last_error = str(e)
                 logger.error("ASR %s 异常: %s", provider.name, e, exc_info=True)
 
+        # 内部错误明细（last_error）只进日志，不透给终端用户
+        logger.error("全部 ASR provider 失败：%s", last_error)
         return JSONResponse(status_code=503, content={
-            "detail": f"全部 ASR provider 失败：{last_error}"
+            "detail": "没听清，请再试一次；多次不行请稍后再试"
         })
 
     finally:
