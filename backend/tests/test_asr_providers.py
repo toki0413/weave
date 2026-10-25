@@ -52,9 +52,12 @@ def test_bailian_key_activates_cloud_provider():
 
 def test_unknown_provider_falls_back_to_vosk():
     s = _settings(provider="whisper")
-    chain = resolve_chain("whisper", s)
-    # vosk available() 为 False（无模型），但链里至少有 vosk 条目
-    assert any(p.name == "vosk" for p in chain)
+    # 显式钉住 vosk 可用：该测试验证的是"未知 provider 回退到 vosk"的顺序，
+    # 不应依赖本地是否恰好有 vosk 模型文件——开发机有模型、CI 没有，
+    # 曾导致本地全绿、CI 的 backend-test 红（#61 合并前最后一个拦路石）。
+    with patch("app.services.asr_providers.vosk.VoskProvider.available", return_value=True):
+        chain = resolve_chain("whisper", s)
+    assert [p.name for p in chain] == ["vosk"]
 
 
 def test_none_provider_gives_empty_chain():
