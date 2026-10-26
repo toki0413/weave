@@ -23,7 +23,7 @@ boto3>=1.43.46             # AWS KMS（可选，仅 kms_provider=aws 时需要�
 # 测试与文档
 hypothesis==6.156.6
 sphinx==9.1.0
-prometheus-client==0.21.0
+prometheus-client==0.26.0
 
 # ASR: 火山引擎一句话识别（asr_volc_* 配置齐备时启用）
 websocket-client==1.8.0
