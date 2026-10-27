@@ -597,9 +597,10 @@ function showManualInput() {
       onclick: function() {
         var text = (ta.value || '').trim();
         if (!text) { ta.focus(); return; }
-        container.innerHTML = '';
+        var target = document.getElementById('elderly-voice-editor');
+        if (target) target.innerHTML = '';
         // 手动输入：无音频无 ASR —— 溯源列保持 NULL（未知），不编造
-        submitSession(text, null, null);
+        submitSession(text, null, null, { statusEl: target });
       }
     }, '保存这条回忆'),
   ]));
@@ -608,19 +609,105 @@ function showManualInput() {
 
 function submitSession(text, audioMetrics, asrInfo, opts) {
   opts = opts || {};
-  // day_number 传 0 = 未指定哨兵，由后端按首条会话日起算（story-8）
-  var p = createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
+
+  if (opts.silent) {
+    // 自动补传路径：无状态 UI，错误原样抛给调用链统计
+    return createSession(0, text, 'mandarin', audioMetrics, asrInfo);
+  }
+
+  var statusEl = opts.statusEl || document.getElementById('elderly-voice-editor');
+
+  if (!isLoggedIn()) {
+    // story-2：未登录绝不假装"已保存"——明示未保存 + 登录入口 + 草稿不丢
+    showNotLoggedInDraft(statusEl, text);
+    return Promise.resolve(false);
+  }
+
+  _setStatus(statusEl, '正在保存…', 'busy');
+  return createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
+    _setStatus(statusEl, '✓ 今天的回忆已存好', 'ok');
+    return true;
+  }).catch(function() {
+    _setStatusFailed(statusEl, text, audioMetrics, asrInfo, opts);
+    return false;
   });
-  if (opts.silent) {
-    // 自动补传路径：失败不弹 alert，由调用方统计；错误原样抛给链
-    return p;
-  }
-  // 顺带堵掉旧版静默吞错（完整三态保存反馈归 story-2，下一批）
-  return p.catch(function() {
-    alert('没存上，请再试一次。');
+}
+
+function _setStatus(container, msg, kind) {
+  if (!container) return;
+  container.innerHTML = '';
+  var color = kind === 'ok' ? '#2e7d32' : (kind === 'fail' ? 'var(--danger)' : 'var(--muted)');
+  container.appendChild(el('div', {
+    style: {
+      fontSize: '1.2rem', fontWeight: '700', color: color,
+      textAlign: 'center', padding: '14px 8px',
+    }
+  }, msg));
+}
+
+function _setStatusFailed(container, text, audioMetrics, asrInfo, opts) {
+  if (!container) return;
+  container.innerHTML = '';
+  var box = el('div', {
+    style: {
+      border: '2px solid var(--danger)', borderRadius: '12px',
+      padding: '14px', textAlign: 'center',
+    }
   });
+  box.appendChild(el('div', {
+    style: { fontSize: '1.15rem', fontWeight: '700', color: 'var(--danger)', marginBottom: '6px' }
+  }, '没存上，请再试一次'));
+  box.appendChild(el('div', {
+    style: { fontSize: '0.95rem', color: 'var(--muted)', marginBottom: '12px' }
+  }, '这段文字给您留着呢，不会丢。'));
+  var row = el('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center' } });
+  row.appendChild(el('button', {
+    className: 'cg-btn btn-primary',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() {
+      // 重试走同一条路径：成功后才更新今日回忆（不再有先显示后保存）
+      submitSession(text, audioMetrics, asrInfo, { statusEl: container, story: opts && opts.story });
+    }
+  }, '再试一次'));
+  box.appendChild(row);
+  container.appendChild(box);
+}
+
+function showNotLoggedInDraft(container, text) {
+  if (!container) return;
+  container.innerHTML = '';
+  var box = el('div', {
+    style: {
+      border: '2px solid var(--warn, #c69214)', borderRadius: '12px',
+      padding: '14px',
+    }
+  });
+  box.appendChild(el('div', {
+    style: { fontSize: '1.1rem', fontWeight: '700', color: 'var(--ink)', marginBottom: '8px' }
+  }, '还没有保存——登录后才会存到服务器上'));
+  var ta = el('textarea', {
+    style: {
+      width: '100%', minHeight: '90px', fontSize: '1.1rem', lineHeight: '1.6',
+      padding: '10px', borderRadius: '10px', border: '2px solid var(--border, #ccc)',
+    }
+  });
+  ta.value = text;   // 草稿保留在屏上，不假装已保存
+  box.appendChild(ta);
+  box.appendChild(el('div', { style: { marginTop: '10px', display: 'flex', gap: '10px' } }, [
+    el('button', {
+      className: 'cg-btn btn-primary',
+      style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+      onclick: function() {
+        import('../ui/auth-modal.js').then(function(mod) { mod.showAuthModal(); });
+      }
+    }, '去登录'),
+    el('span', {
+      style: { fontSize: '0.95rem', color: 'var(--muted)', alignSelf: 'center' }
+    }, '登录后再点保存'),
+  ]));
+  container.appendChild(box);
 }
 
 function showVoiceEditor(transcript, confidenceMap, asrInfo) {
@@ -639,33 +726,19 @@ function showVoiceEditor(transcript, confidenceMap, asrInfo) {
   var editor = createVoiceEditor(transcript, confidenceMap);
   container.appendChild(editor);
 
-  editor.confirmButton.onclick = function() {
+  function submitFromEditor() {
     var text = editor.getCorrectedText();
     container.innerHTML = '';
-    // 将修正后的文本直接显示为今日回忆
-    var content = document.getElementById('elderly-memory-content');
-    if (content) content.textContent = text;
-    // 提交到后端（如果有登录）
-    if (isLoggedIn()) {
-      submitSession(text, asrInfo ? asrInfo.audioMetrics : null, asrInfo ? {
-        asr_provider: asrInfo.provider,
-        asr_confidence: asrInfo.confidence,
-      } : null);
-    }
-  };
+    // story-2：不在保存前预写今日回忆——只有 createSession 成功才更新
+    submitSession(text,
+      asrInfo ? asrInfo.audioMetrics : null,
+      asrInfo ? { asr_provider: asrInfo.provider, asr_confidence: asrInfo.confidence } : null,
+      { statusEl: container });
+  }
 
-  editor.directButton.onclick = function() {
-    var text = editor.getCorrectedText();
-    container.innerHTML = '';
-    var content = document.getElementById('elderly-memory-content');
-    if (content) content.textContent = text;
-    if (isLoggedIn()) {
-      submitSession(text, asrInfo ? asrInfo.audioMetrics : null, asrInfo ? {
-        asr_provider: asrInfo.provider,
-        asr_confidence: asrInfo.confidence,
-      } : null);
-    }
-  };
+  // 两按钮行为暂同（合并/差异化归后续 story），但都走同一条诚实保存路径
+  editor.confirmButton.onclick = submitFromEditor;
+  editor.directButton.onclick = submitFromEditor;
 }
 
 function renderTodayMemory() {
