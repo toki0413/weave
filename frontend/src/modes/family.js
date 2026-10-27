@@ -12,15 +12,18 @@ export function renderFamilyMode(container, elderlyData) {
   document.body.className = 'mode-family';
 
   var data = elderlyData || {};
-  var healthScore = data.healthScore != null ? data.healthScore : 85;
+  // story-11：无数据不再回落假分数 85——null 走"未记录"诚实显示
+  var healthScore = data.healthScore != null ? data.healthScore : null;
   var anomalies = data.anomalies || [];
   var memories = data.memories || [];
   var unreadCount = data.unreadCount || 0;
   var graphNodes = data.graphNodes || [];
   var graphEdges = data.graphEdges || [];
 
-  var color = healthScore >= 80 ? '#4A7C4A' : healthScore >= 60 ? '#B8860B' : '#C75B5B';
-  var bg = healthScore >= 80 ? 'rgba(74,124,74,0.15)' : healthScore >= 60 ? 'rgba(184,134,11,0.15)' : 'rgba(199,91,91,0.15)';
+  var color = healthScore == null ? 'var(--muted)'
+    : healthScore >= 80 ? '#4A7C4A' : healthScore >= 60 ? '#B8860B' : '#C75B5B';
+  var bg = healthScore == null ? 'rgba(128,128,128,0.12)'
+    : healthScore >= 80 ? 'rgba(74,124,74,0.15)' : healthScore >= 60 ? 'rgba(184,134,11,0.15)' : 'rgba(199,91,91,0.15)';
 
   var app = el('div', {
     className: 'family-app',
@@ -98,7 +101,12 @@ export function renderFamilyMode(container, elderlyData) {
   }, '今日健康分'));
   hero.appendChild(el('div', {
     style: { fontSize: '2rem', fontWeight: '800', color: color }
-  }, String(healthScore)));
+  }, healthScore == null ? '—' : String(healthScore)));
+  if (healthScore == null) {
+    hero.appendChild(el('div', {
+      style: { fontSize: '0.78rem', color: 'var(--muted)', marginTop: '2px' }
+    }, '今天还没有记录'));
+  }
   app.appendChild(hero);
 
   // 今日异常提醒（紧凑）
@@ -456,34 +464,48 @@ export function renderFamilyMode(container, elderlyData) {
     narrativeContent.textContent = node.narrative || '暂无叙事内容';
   }
 
-  import('../3d/memory-nebula.js').then(function(mod) {
-    _nebulaController = mod.initMemoryNebula(nebulaWrap, graphNodes, memories);
-    if (_nebulaController) {
-      _nebulaController.setOnNodeClick(showNarrative);
-    } else {
-      // WebGL 不支持：回退到记忆列表
-      nebulaWrap.innerHTML = '';
-      nebulaWrap.style.background = 'var(--bg2)';
-      nebulaWrap.style.padding = '16px';
-      nebulaWrap.style.overflowY = 'auto';
-      memories.slice(0, 10).forEach(function(m) {
-        var card = el('div', {
-          style: {
-            background: 'var(--bg)',
-            borderRadius: '10px',
-            padding: '12px',
-            marginBottom: '8px',
-          }
+  if (!graphNodes.length) {
+    // story-11：空图谱不再让 nebula 生成 30 个假"记忆"节点——显示诚实引导
+    nebulaWrap.style.background = 'var(--bg2)';
+    nebulaWrap.appendChild(el('div', {
+      style: {
+        position: 'absolute', top: '50%', left: '50%',
+        transform: 'translate(-50%, -50%)',
+        textAlign: 'center', color: 'var(--muted)',
+        fontSize: '0.95rem', lineHeight: 1.9, padding: '0 24px',
+        whiteSpace: 'pre-line',
+      }
+    }, '还没有记忆之星\n每陪老人记录一天，这里就多一颗星'));
+  } else {
+    import('../3d/memory-nebula.js').then(function(mod) {
+      _nebulaController = mod.initMemoryNebula(nebulaWrap, graphNodes, memories);
+      if (_nebulaController) {
+        _nebulaController.setOnNodeClick(showNarrative);
+      } else {
+        // WebGL 不支持：回退到记忆列表
+        nebulaWrap.innerHTML = '';
+        nebulaWrap.style.background = 'var(--bg2)';
+        nebulaWrap.style.padding = '16px';
+        nebulaWrap.style.overflowY = 'auto';
+        memories.slice(0, 10).forEach(function(m) {
+          var card = el('div', {
+            style: {
+              background: 'var(--bg)',
+              borderRadius: '10px',
+              padding: '12px',
+              marginBottom: '8px',
+            }
+          });
+          var dateStr = m.date || m.created_at ? new Date(m.date || m.created_at).toLocaleDateString('zh-CN') : '今天';
+          card.appendChild(el('div', { style: { fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '4px' } }, dateStr));
+          card.appendChild(el('div', { style: { fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--ink)' } }, m.narrative_text || m.text || '—'));
+          nebulaWrap.appendChild(card);
         });
-        var dateStr = m.date || m.created_at ? new Date(m.date || m.created_at).toLocaleDateString('zh-CN') : '今天';
-        card.appendChild(el('div', { style: { fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '4px' } }, dateStr));
-        card.appendChild(el('div', { style: { fontSize: '0.9rem', lineHeight: '1.5', color: 'var(--ink)' } }, m.narrative_text || m.text || '—'));
-        nebulaWrap.appendChild(card);
-      });
-    }
-  }).catch(function(err) {
-    console.error('3D module load failed:', err);
-  });
+      }
+    }).catch(function(err) {
+      console.error('3D module load failed:', err);
+    });
+  }
 
   // 启动 WebSocket 连接
   var token = getToken();

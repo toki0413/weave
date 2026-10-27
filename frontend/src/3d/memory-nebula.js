@@ -54,6 +54,12 @@ var EMOTION_COLORS = {
 var DAYS_MS = 24 * 60 * 60 * 1000;
 
 export function initMemoryNebula(container, rawNodes, sessions) {
+  // story-11：空图谱不再伪造 30 个假节点，也不再走渲染管线——
+  // 返回 null 让调用方按"不可用"路径处理（family 已有空态引导；
+  // view-switcher 回退 2D）。旧版这里靠 demo 节点把空态混成了"有数据"。
+  if (!rawNodes || rawNodes.length === 0) {
+    return null;
+  }
   // ====== Feature detection & graceful degradation ======
   var canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
@@ -613,8 +619,10 @@ export function initMemoryNebula(container, rawNodes, sessions) {
 
 function buildNodeData(rawNodes, sessions, now) {
   if (!rawNodes || rawNodes.length === 0) {
-    // Generate demo nodes if empty
-    return generateDemoNodes();
+    // story-11：空图谱返回空——旧的 generateDemoNodes() 会伪造 30 个"记忆"
+    // 节点，向老人/家属/医生展示虚构的记忆星图。空就是空，引导文案由
+    // 调用方（family.js 等）的空态负责。
+    return [];
   }
 
   var nodeMap = {};
@@ -685,25 +693,3 @@ function buildEdges(nodes) {
   return edges;
 }
 
-function generateDemoNodes() {
-  var types = ['person', 'event', 'place', 'time'];
-  var nodes = [];
-  for (var i = 0; i < 30; i++) {
-    var daysAgo = Math.random() * 60;
-    var z = daysAgo < 7 ? (Math.random() - 0.5) * 3 : -daysAgo * 1.5 - Math.random() * 5;
-    nodes.push({
-      id: i,
-      label: '记忆 ' + (i + 1),
-      type: types[i % 4],
-      x: (Math.random() - 0.5) * 60,
-      y: (Math.random() - 0.5) * 40,
-      z: z,
-      radius: 2.0,
-      date: Date.now() - daysAgo * DAYS_MS,
-      narrative: '这是关于 ' + types[i % 4] + ' 的叙事片段...',
-      emotion: Math.random() > 0.6 ? 'positive' : (Math.random() > 0.5 ? 'negative' : 'neutral'),
-      _shown: false,
-    });
-  }
-  return nodes;
-}

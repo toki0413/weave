@@ -271,19 +271,9 @@ function generateTrendData(days) {
         label: (d.getMonth() + 1) + '/' + d.getDate(),
       });
     });
-  } else {
-    var health = 82;
-    for (var i = 1; i <= days; i++) {
-      var change = (Math.random() - 0.4) * 10;
-      health = Math.max(30, Math.min(100, health + change));
-      var d = new Date();
-      d.setDate(d.getDate() - (days - i));
-      trend.push({
-        health: Math.round(health),
-        label: (d.getMonth() + 1) + '/' + d.getDate(),
-      });
-    }
   }
+  // story-11：无数据返回空数组，由图表组件显示诚实的"暂无数据"——
+  // 旧版用 Math.random 伪造健康曲线，认知健康产品展示虚构数据是研究事故
   return trend;
 }
 
@@ -303,19 +293,8 @@ function generateEmotionTrendData(days) {
         label: (d.getMonth() + 1) + '/' + d.getDate(),
       });
     });
-  } else {
-    var score = 0;
-    for (var i = 1; i <= days; i++) {
-      var change = (Math.random() - 0.5) * 20;
-      score = Math.max(-100, Math.min(100, score + change));
-      var d = new Date();
-      d.setDate(d.getDate() - (days - i));
-      trend.push({
-        health: Math.round((score / 100 + 1) * 50),
-        label: (d.getMonth() + 1) + '/' + d.getDate(),
-      });
-    }
   }
+  // story-11：情绪趋势同理——无数据不再随机游走伪造曲线
   return trend;
 }
 

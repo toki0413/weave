@@ -9,6 +9,7 @@ import { connect as wsConnect, send as wsSend, isConnected } from '../services/w
 import { getToken } from '../api/client.js';
 import { cacheMessages, getCachedMessages } from '../db/offline.js';
 import { savePendingAudio, getPendingAudioList, countPendingAudio, deletePendingAudio } from '../db/offline.js';
+import { localDateKey, computeStreak } from '../ui/dailyStreak.js';
 import * as vs from '../3d/view-switcher.js';
 
 // story-7 主路径契约（PRD pilot-p0-repair）：
@@ -19,6 +20,8 @@ import * as vs from '../3d/view-switcher.js';
 var _pendingBlob = null;   // 待补传的录音（内存保底）
 var _pendingStoreId = null; // story-1：该录音在 IndexedDB pendingAudio 里的 id
 var _recording = false;    // SR / recorder 任一活动中
+var _todayDone = false;    // story-3：今天已有会话
+var _streakCount = 0;      // story-3：连续记录天数（本地日历日）
 
 export function renderElderlyMode(container) {
   container.innerHTML = '';
@@ -228,6 +231,16 @@ function renderVoiceArea() {
   }, '');
   wrap.appendChild(timer);
 
+  // story-3：今日完成态 + 连续天数徽记
+  var todayStatus = el('div', {
+    id: 'elderly-today-status',
+    style: {
+      marginTop: '8px', fontSize: '1.05rem', fontWeight: '700',
+      color: '#2e7d32', display: 'none',
+    }
+  }, '');
+  wrap.appendChild(todayStatus);
+
   // SR 实时预览（仅预览，不是最终文本；后端转写结果到达后由编辑器取代）
   var preview = el('div', {
     id: 'elderly-voice-preview',
@@ -261,7 +274,8 @@ function _setTimer(show, text) {
 }
 
 function _setBtnIdle(btn) {
-  btn.textContent = '🎤 按住说话';
+  // story-3：今天已完成时按钮文案提示"再说一条也可以"——仍可录音，不拦想多说的老人
+  btn.textContent = _todayDone ? '🎤 今天已记录，再说一条也可以' : '🎤 按住说话';
   btn.style.background = '';
   btn.style.color = '';
   btn.disabled = false;
@@ -589,6 +603,7 @@ function retryAllPending(silent) {
           area.__resultMsg = '这次没成功，等网络好了再试试';
         }
       }
+      loadTodayMemory();   // story-3：补传入库后刷新完成态/连续天数
       renderPendingArea();
     });
   }).catch(function() { renderPendingArea(); });
@@ -761,7 +776,15 @@ function submitSession(text, audioMetrics, asrInfo, opts) {
   return createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
-    _setStatus(statusEl, '✓ 今天的回忆已存好', 'ok');
+    // story-3：今天第一条 → 完成态 + 连续天数庆祝（大字，2 秒内到达）
+    if (!_todayDone) {
+      _todayDone = true;
+      _streakCount = _streakCount + 1;
+      renderTodayStatus();
+    }
+    _setStatus(statusEl,
+      '✓ 今天的回忆已存好' + (_streakCount > 1 ? ' ⭐ 已连续 ' + _streakCount + ' 天' : ''),
+      'ok');
     return true;
   }).catch(function() {
     _setStatusFailed(statusEl, text, audioMetrics, asrInfo, opts);
@@ -897,17 +920,42 @@ function renderTodayMemory() {
 }
 
 function loadTodayMemory() {
-  listSessions(1).then(function(sessions) {
+  // story-3：按本地日历日判定"今天"（旧版取 listSessions(1) 的"最新一条"
+  // 当今天——隔一天没录就会把昨天的记录当成今天的，完成态全是错的）
+  listSessions(30).then(function(sessions) {
     var content = document.getElementById('elderly-memory-content');
-    if (!content) return;
-    if (sessions && sessions.length > 0) {
-      var s = sessions[0];
-      content.textContent = s.narrative_text || s.text || '暂无今日记录';
-    } else {
-      content.textContent = '暂无今日记录，点击上方按钮讲述今天的故事吧。';
+    sessions = sessions || [];
+    var todayKey = localDateKey(Date.now());
+    var keys = sessions.map(function(s) { return localDateKey(s.created_at); });
+    var todays = sessions.filter(function(s) { return localDateKey(s.created_at) === todayKey; });
+    _todayDone = todays.length > 0;
+    _streakCount = computeStreak(keys, todayKey);
+    if (content) {
+      if (_todayDone) {
+        var last = todays[todays.length - 1];
+        content.textContent = last.narrative || last.narrative_text || last.text || '（今天已记录）';
+      } else {
+        content.textContent = '暂无今日记录，点击上方按钮讲述今天的故事吧。';
+      }
     }
+    renderTodayStatus();
   }).catch(function() {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = '暂无今日记录';
   });
+}
+
+function renderTodayStatus() {
+  var st = document.getElementById('elderly-today-status');
+  if (st) {
+    if (_todayDone) {
+      st.style.display = 'block';
+      st.textContent = '✓ 今天已经记录啦' + (_streakCount > 1 ? ' · 已连续 ' + _streakCount + ' 天' : '');
+    } else {
+      st.style.display = 'none';
+      st.textContent = '';
+    }
+  }
+  var btn = document.getElementById('elderly-rec-btn');
+  if (btn && !_recording) _setBtnIdle(btn);
 }
