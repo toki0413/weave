@@ -327,6 +327,7 @@ function renderVoiceCard() {
             if (btn) { btn.textContent = '🎤 录音'; btn.style.background = ''; btn.style.color = ''; }
             // 上传到后端做 STT
             uploadAudio(blob).then(function(result) {
+              state._sttFailCount = 0;   // 成功清零，连续失败计数重新累计
               document.getElementById('voice-input').value = result.text || '';
               window.__last_voice_result__ = {
                 text: result.text || '',
@@ -337,10 +338,14 @@ function renderVoiceCard() {
               }
             }).catch(function(err) {
               console.error('STT upload failed:', err);
-              var msg = err && err.message ? err.message : '语音识别服务暂不可用';
-              alert('语音识别失败：' + msg + '，您可以手动输入文字。');
-              state.sttAvailable = false;
-              render();
+              // story-5：连续 3 次失败才降级（单次瞬态失败不禁用）；
+              // story-10：文案人话化，不拼接后端错误原文
+              state._sttFailCount = (state._sttFailCount || 0) + 1;
+              alert('没听清，请再试一次；多次不行请稍后再试。您也可以直接输入文字。');
+              if (state._sttFailCount >= 3) {
+                state.sttAvailable = false;
+                render();
+              }
             });
           };
           recorder.onError = function(msg) {
@@ -710,6 +715,14 @@ function renderLeftPanel() {
         el('div', { className: 'fam-stat' }, [el('div', { className: 'fam-stat-num' }, String(fEdges)), el('div', { className: 'fam-stat-label' }, '关系连接')]),
         el('div', { className: 'fam-stat' }, [el('div', { className: 'fam-stat-num' }, String(fAnon)), el('div', { className: 'fam-stat-label' }, '匿名节点')]),
       ]),
+      // story-9 AC4：家属视图入口（旧版"衰退分析"按钮只在医生分支，家属点不到）
+      el('button', {
+        className: 'cg-btn',
+        style: { width: '100%', marginTop: '10px' },
+        onclick: function() {
+          import('../decline.js').then(function(mod) { mod.openDeclinePanel(); });
+        }
+      }, '🧠 查看本周脑健康小结'),
     ]));
     return panel;
   }

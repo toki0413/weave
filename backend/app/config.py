@@ -57,15 +57,25 @@ class Settings(BaseSettings):
     kms_key_id: str = ""            # aws 模式下的 KMS key ID
     kms_aws_region: str = ""        # aws 区域
 
-    # ASR (离线优先，Vosk 为默认引擎)
-    asr_provider: str = "vosk"  # vosk | volcengine | whisper | none
+    # ASR (离线优先，Vosk 为默认引擎；链式降级见 services/asr_providers)
+    asr_provider: str = "vosk"  # vosk | bailian | volc | none
     asr_model_path: str = ""
     # 火山引擎一句话识别（豆包语音同源，官方场景含老人方言对话）；三项齐备才启用
     asr_volc_app_id: str = ""
     asr_volc_token: str = ""
     asr_volc_cluster: str = ""
+    asr_volc_timeout: float = 15.0   # WebSocket 单次识别超时（原内联版硬编码值）
     # Google 在线降级：境内网络不可达，默认关闭；部署方显式开启后才走在线降级
     stt_online_fallback: bool = False
+
+    # 阿里云百炼 DashScope（OpenAI 兼容端点，复用 httpx，不引 dashscope SDK）
+    bailian_api_key: str = ""       # 留空则百炼整体关闭，回到 vosk-only
+    bailian_workspace_id: str = ""  # 业务空间专属域名用，空则用公共端点
+    bailian_region: str = "cn-beijing"
+    bailian_base_url: str = ""      # 显式覆盖；空则由 workspace/region 推导
+    bailian_asr_model: str = "qwen3-asr-flash"
+    bailian_asr_timeout: float = 25.0
+    bailian_context_words_max: int = 2000  # system context 字符上限
 
     # LLM (可选，仅在用户配置时启用)
     llm_provider: str = ""  # 留空表示不使用 LLM

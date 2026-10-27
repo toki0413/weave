@@ -87,16 +87,21 @@ def build_personal_baseline(
         包含 ``personal_mean`` / ``personal_std`` / ``sample_count`` 的字典，
         或 ``None``（历史会话不足 2 条时无法计算标准差）。
     """
-    sessions = (
+    # 先取宽一点，再剔除低置信转写，最后截 sample_size 条：
+    # 若在 SQL 里先 limit，被剔除的条数会白白吃掉配额，实际样本比声称的少。
+    # low_confidence IS NULL 的旧记录**保留**（未知 ≠ 不可信）。
+    candidates = (
         db_session.query(DBSession)
         .filter(
             DBSession.user_id == user_id,
             DBSession.metrics.isnot(None),
         )
         .order_by(DBSession.created_at.desc())
-        .limit(sample_size)
+        .limit(sample_size * 3)
         .all()
     )
+    excluded_low_conf = sum(1 for s in candidates if s.low_confidence is True)
+    sessions = [s for s in candidates if s.low_confidence is not True][:sample_size]
 
     if len(sessions) < 2:
         logger.info(
@@ -145,6 +150,7 @@ def build_personal_baseline(
             "personal_mean": personal_mean,
             "personal_std": personal_std,
             "sample_count": len(sessions),
+            "excluded_low_confidence": excluded_low_conf,
         }
         baseline_row.created_at = datetime.now(timezone.utc)
     else:
@@ -158,6 +164,7 @@ def build_personal_baseline(
                 "personal_mean": personal_mean,
                 "personal_std": personal_std,
                 "sample_count": len(sessions),
+            "excluded_low_confidence": excluded_low_conf,
             },
         )
         db_session.add(baseline_row)
@@ -176,6 +183,7 @@ def build_personal_baseline(
         "personal_mean": personal_mean,
         "personal_std": personal_std,
         "sample_count": len(sessions),
+            "excluded_low_confidence": excluded_low_conf,
     }
 
 

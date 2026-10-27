@@ -92,6 +92,15 @@ class SessionCreate(BaseModel):
     source: Optional[str] = Field(
         None, max_length=32, description="记录来源归因：daily_prompt / manual / share / import"
     )
+    # ASR 溯源（0018 列的写入入口）。转写来自 /stt/transcribe 的响应：
+    # asr_provider=source，asr_confidence=confidence。手动输入/无音频路径
+    # 不传 —— 列保持 NULL（"未知"），绝不编造。
+    asr_provider: Optional[str] = Field(
+        None, max_length=20, description="转写 provider：bailian / volc / vosk"
+    )
+    asr_confidence: Optional[float] = Field(
+        None, ge=0, le=1, description="启发式置信度（stt.py 字符密度映射）"
+    )
 
 # ========== Graph / Metrics ==========
 class GraphData(BaseModel):

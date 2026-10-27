@@ -45,11 +45,15 @@ const SCENARIOS = [
 
 const NODE_TYPES = {
   person: { color: '#4A7C4A', label: '人物', icon: '人' },
-  place:  { color: '#B86B4C', label: '地点', icon: '地' },
+  // place 原 #B86B4C：白字 4.00 < 4.5（大字门槛）。向黑插值取最浅达标值 4.52。
+  place:  { color: '#AB6447', label: '地点', icon: '地' },
   event:  { color: '#3D6FA8', label: '事件', icon: '事' },
   item:   { color: '#7B5394', label: '物品', icon: '物' },
   self:   { color: '#2D5A2C', label: '自我', icon: '我' },
-  anon:   { color: '#B8860B', label: '匿名', icon: '?' },
+  // anon 原 #B8860B：白字 3.25 < 4.5，且对画布底 2.96 < 3.0（1.4.11），两项都不过。
+  // 插值到 #996F09 后两项均 4.53。注意它让 item/anon 的色差由 95.7 降到 11.4，
+  // 见 verify-graph-colors.mjs 的 ΔE 告警——分类仍只靠颜色，是 1.4.1 的遗留风险。
+  anon:   { color: '#996F09', label: '匿名', icon: '?' },
 };
 
 const EDGE_TYPES = {

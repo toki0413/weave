@@ -2,7 +2,7 @@
 // 原生 IndexedDB API，不依赖 dexie，减少依赖体积
 
 const DB_NAME = 'cognitive-garden-offline';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function openDB() {
   return new Promise(function(resolve, reject) {
@@ -30,6 +30,12 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains('cachedMessages')) {
         db.createObjectStore('cachedMessages', { keyPath: 'id' });
+      }
+      // story-1：待补传录音。这是用户的"说了但没存上"的数据，不是缓存——
+      // 只有补传成功或用户主动删除才会清除，clearAllCache 不得碰它
+      if (!db.objectStoreNames.contains('pendingAudio')) {
+        const store = db.createObjectStore('pendingAudio', { keyPath: 'id', autoIncrement: true });
+        store.createIndex('created_at', 'created_at', { unique: false });
       }
     };
   });
@@ -286,9 +292,40 @@ export async function clearCachedMessages() {
   return promisifyRequest(store.clear());
 }
 
+// ========== 待补传录音（story-1） ==========
+// 录音 blob 可结构化克隆，直接入 IndexedDB；补传成功或用户主动删除才清除
+export async function savePendingAudio(blob) {
+  const store = await withStore('pendingAudio', 'readwrite');
+  return promisifyRequest(store.add({
+    blob: blob,
+    created_at: new Date().toISOString(),
+    retry_count: 0,
+  }));
+}
+
+export async function getPendingAudioList() {
+  const store = await withStore('pendingAudio', 'readonly');
+  const all = await promisifyRequest(store.getAll());
+  return (all || []).sort(function(a, b) {
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
+}
+
+export async function countPendingAudio() {
+  const store = await withStore('pendingAudio', 'readonly');
+  return promisifyRequest(store.count());
+}
+
+export async function deletePendingAudio(id) {
+  const store = await withStore('pendingAudio', 'readwrite');
+  return promisifyRequest(store.delete(id));
+}
+
 // ========== Helpers ==========
 export async function clearAllCache() {
   await clearCachedSessions();
   await clearCachedScales();
   await clearCachedMessages();
+  // 注意：pendingAudio 不在此清除——它是用户"说了但没存上"的录音（story-1），
+  // 不是缓存；只随补传成功或用户在待存档入口主动删除而清除
 }

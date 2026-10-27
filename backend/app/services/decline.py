@@ -13,6 +13,7 @@ from app.services.baseline_personal import (
     check_personal_deviation,
     get_baseline_explanation,
 )
+from app.services.narrative_text import decrypt_narrative, DECRYPT_FAILED
 from app.services.nlp import extract_entities, extract_anon_features, extract_fillers
 
 logger = logging.getLogger("cognitive_garden")
@@ -52,8 +53,13 @@ def _flatten_entities(entities: Dict[str, List[str]]) -> List[str]:
     return out
 
 
-def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
-    """汇总一段时间窗口内的会话统计"""
+def _collect_session_stats(sessions: List[DBSession], user_id: str) -> Dict[str, Any]:
+    """汇总一段时间窗口内的会话统计
+
+    注意：narrative 在库里是密文（session.py:146-156 写入即加密），必须先过
+    decrypt_narrative。历史上这里直接读 s.narrative，于是四个检测器吃的是
+    base64 密文 —— 不报错，只交出近乎恒定的数字。
+    """
     all_entities: List[str] = []
     entity_freq: Dict[str, int] = defaultdict(int)
     total_chars = 0
@@ -65,9 +71,15 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
     event_freq: Dict[str, int] = defaultdict(int)
     per_day_events: List[set] = []
     filler_rates: List[float] = []
+    decrypt_failed = 0
 
     for s in sessions:
-        text = s.narrative or ""
+        nt = decrypt_narrative(s.narrative, user_id, bool(s.is_encrypted))
+        if nt.state == DECRYPT_FAILED:
+            # 不静默退回密文：计入 skipped，由调用方决定是出档还是拒绝出档
+            decrypt_failed += 1
+            continue
+        text = nt.text
         if not text.strip():
             continue
         ents = extract_entities(text)
@@ -94,6 +106,8 @@ def _collect_session_stats(sessions: List[DBSession]) -> Dict[str, Any]:
 
     return {
         "session_count": len(sessions),
+        "usable_count": len(sessions) - decrypt_failed,
+        "decrypt_failed": decrypt_failed,
         "entity_freq": dict(entity_freq),
         "event_freq": dict(event_freq),
         "all_entities": all_entities,
@@ -266,6 +280,24 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
         if prev_start <= _ensure_utc(s.created_at) < recent_start
     ]
 
+    # ---- 周粒度 tier 先算：两条"数据不足"早退路径也必须带 tier 字段。----
+    # 尤其前者：老人停止记录两周后 7 天窗口为空会在这里早退，
+    # 但"最后一个有效周 vs 基线"的偏离信号依然存在 —— 那才是真正的衰退观测点。
+    from app.services.weekly_baseline import evaluate_user_tier
+    tier_info = evaluate_user_tier(db, user_id)
+
+    TIER_FIELDS = {
+        "tier": tier_info.get("tier"),
+        "tier_reason": tier_info.get("tier_reason"),
+        "tier_counts": tier_info.get("tier_counts"),
+        "tier_signals": tier_info.get("tier_signals"),
+        "tier_config_version": tier_info.get("config_version"),
+        "baseline_weeks": tier_info.get("baseline_weeks"),
+        "valid_weeks": tier_info.get("valid_weeks"),
+        "max_attainable_z": tier_info.get("max_attainable_z"),
+        "next_step": tier_info.get("next_step"),
+    }
+
     # 数据不足时直接返回
     if len(recent_sessions) == 0 or len(prev_sessions) == 0:
         return {
@@ -279,10 +311,43 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
             "repetition": [],
             "anonymization_trend": {},
             "message": "近期或历史叙事数据不足，无法计算衰退分数",
+            **TIER_FIELDS,
         }
 
-    recent_stats = _collect_session_stats(recent_sessions)
-    prev_stats = _collect_session_stats(prev_sessions)
+    recent_stats = _collect_session_stats(recent_sessions, user_id)
+    prev_stats = _collect_session_stats(prev_sessions, user_id)
+
+    # 解不出明文就不出结论：宁可报数据不足，也不交出一堆恒定值
+    if recent_stats["decrypt_failed"] or prev_stats["decrypt_failed"]:
+        logger.warning(
+            "用户 %s 衰退分析跳过 %d 条会话（解密失败）",
+            user_id, recent_stats["decrypt_failed"] + prev_stats["decrypt_failed"],
+        )
+    if (recent_stats["usable_count"] == 0 or prev_stats["usable_count"] == 0):
+        return {
+            "decline_score": 0,
+            "level": "数据不足",
+            "signal_source": "fixed_threshold",
+            "window_days": window_days,
+            "recent_session_count": len(recent_sessions),
+            "previous_session_count": len(prev_sessions),
+            "usable_session_count": {
+                "recent": recent_stats["usable_count"],
+                "previous": prev_stats["usable_count"],
+            },
+            "decrypt_failed": {
+                "recent": recent_stats["decrypt_failed"],
+                "previous": prev_stats["decrypt_failed"],
+            },
+            "forgotten_entities": [],
+            "narrative_simplification": {},
+            "repetition": [],
+            "anonymization_trend": {},
+            "personal_deviation": {"deviated": False, "dimensions": [], "has_baseline": False},
+            "explanation": None,
+            "message": "近期或历史叙事数据不足，无法计算衰退分数",
+            **TIER_FIELDS,
+        }
 
     forgotten = _detect_forgotten_entities(recent_stats, prev_stats, window_days)
     simplification = _detect_narrative_simplification(recent_stats, prev_stats)
@@ -312,6 +377,12 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
         )
         # 个人基线分数映射：危险维度 +25、关注维度 +10，上限 100。
         # 区分度来自个体自身历史分布（z-score），不再叠加群体固定阈值。
+        #
+        # 【量纲错配封顶】check_personal_deviation 拿的是**单条会话**指标，
+        # 而周基线的 mean/std 描述的是周均值分布：一周 3–7 条的均值波动约是
+        # 单条的 1/√k，单会话 z 被系统性放大。周基线成熟（见下方 evaluate_user_tier）
+        # 之前，这条 legacy 路径封顶在"关注"，不出"警告"——否则会迎来假 danger 风暴。
+        # 封顶只作用于本响应的 score/level；personal_deviation 明细原样保留供展示。
         personal_score = min(100, danger_count * 25 + warning_count * 10)
         score = personal_score
         if score < 20:
@@ -319,17 +390,42 @@ def analyze_narrative_diff(user_id: str, db: Session, window_days: int = 7) -> D
         elif score < 50:
             level = "关注"
         else:
-            level = "警告"
+            level = "关注"          # 量纲错配封顶：见上
+            score = min(score, 49)
         if personal_deviation.get("deviated"):
             explanation = get_baseline_explanation(personal_deviation)
+
+    # ---- 周粒度 tier（app/services/weekly_baseline.py，已在函数开头计算）----
+    # 达到 12 个有效周后 tier 接管 score/level；不足时保留 legacy 值、
+    # tier 字段如实报 insufficient_data。
+    if isinstance(tier_info.get("decline_score"), int):
+        score = tier_info["decline_score"]
+        level = tier_info["level"]
 
     return {
         "decline_score": score,
         "level": level,
         "signal_source": signal_source,
+        "tier": tier_info.get("tier"),
+        "tier_reason": tier_info.get("tier_reason"),
+        "tier_counts": tier_info.get("tier_counts"),
+        "tier_signals": tier_info.get("tier_signals"),
+        "tier_config_version": tier_info.get("config_version"),
+        "baseline_weeks": tier_info.get("baseline_weeks"),
+        "valid_weeks": tier_info.get("valid_weeks"),
+        "max_attainable_z": tier_info.get("max_attainable_z"),
+        "next_step": tier_info.get("next_step"),
         "window_days": window_days,
         "recent_session_count": len(recent_sessions),
         "previous_session_count": len(prev_sessions),
+        "usable_session_count": {
+            "recent": recent_stats["usable_count"],
+            "previous": prev_stats["usable_count"],
+        },
+        "decrypt_failed": {
+            "recent": recent_stats["decrypt_failed"],
+            "previous": prev_stats["decrypt_failed"],
+        },
         "forgotten_entities": forgotten,
         "narrative_simplification": simplification,
         "repetition": repetition,
@@ -357,9 +453,16 @@ def build_entity_timeline(user_id: str, db: Session, days: int = 30) -> Dict[str
     timeline: List[Dict[str, Any]] = []
     entity_dates: Dict[str, List[str]] = defaultdict(list)
     entity_peak: Dict[str, int] = defaultdict(int)
+    decrypt_failed = 0
 
     for s in sessions:
-        text = s.narrative or ""
+        nt = decrypt_narrative(s.narrative, user_id, bool(s.is_encrypted))
+        if nt.state == DECRYPT_FAILED:
+            decrypt_failed += 1
+            continue
+        text = nt.text
+        if not text.strip():
+            continue
         ents = extract_entities(text)
         flat = _flatten_entities(ents)
         counts: Dict[str, int] = defaultdict(int)
@@ -398,4 +501,6 @@ def build_entity_timeline(user_id: str, db: Session, days: int = 30) -> Dict[str
         "timeline": timeline,
         "disappearing": disappearing,
         "total_entities": len(entity_dates),
+        "session_count": len(sessions),
+        "decrypt_failed": decrypt_failed,
     }

@@ -6,17 +6,15 @@ import { render } from '../render.js';
 import { createNotificationBell, refreshNotifications, destroyNotificationBell } from '../notifications.js';
 
 import { renderViewSwitcher, getViewMode, setViewMode, exit3DMode } from '../../3d/view-switcher.js';
+import { applyMode } from '../mode.js';
 
 // 切换视图（老人端 / 家属端 / 医生端）
 function switchView(view) {
   state.view = view;
-  document.documentElement.classList.remove('elderly-mode', 'family-mode', 'doctor-mode');
-  document.documentElement.classList.add(view + '-mode');
-  document.body.className = 'mode-' + view;
+  applyMode(view);          // 类名只经 mode.js 写，避免与 init.js / mode 文件互相覆盖
   // 切换到 elderly 时强制 2D 模式
   if (view === 'elderly') {
-    localStorage.setItem('viewMode', '2d');
-    exit3DMode();
+    exit3DMode();           // 只退出当前 3D，不写共享的 viewMode 偏好
   }
   render();
 }
@@ -24,9 +22,10 @@ function switchView(view) {
 // 调整全局字号缩放
 function setFontScale(s) {
   state.fontScale = s;
-  var px = Math.round(s * 16);
+  // 只写倍率：像素基准由 CSS 按模式给（完整模式 16px / 老人端 20px）。
+  // 旧实现写内联 --font-size = s*16，既把老人端基准钉死在 16，
+  // 又因内联优先级压掉 styles.css 的 html.elderly-mode 字号规则。
   document.documentElement.style.setProperty('--font-scale', String(s));
-  document.documentElement.style.setProperty('--font-size', px + 'px');
   localStorage.setItem('fontSize', String(s));
   render();
 }

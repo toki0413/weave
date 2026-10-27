@@ -57,6 +57,13 @@ class Session(Base):
     emotion_label = Column(String(20), nullable=True)  # positive / neutral / negative
     # 记录来源归因（2026-10 日课漏斗）：daily_prompt / manual / share / import
     source = Column(String(32), nullable=True)
+    # ASR 溯源（试点期新增）：用于把"老人没说"与"机器没听清"分开
+    # 三列一律可空且**不给默认值**：Vosk 旧数据没有真实置信度（源码里是硬编码
+    # 0.9 / 1.0），把 low_confidence 默认成 False 等于替旧数据作保。
+    asr_provider = Column(String(20), nullable=True)
+    asr_confidence = Column(Float, nullable=True)
+    low_confidence = Column(Boolean, nullable=True)
+    asr_duration_sec = Column(Float, nullable=True)
     created_at = Column(DateTime, default=_utc_now)
     
     user = relationship("User", back_populates="sessions")

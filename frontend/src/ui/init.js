@@ -6,24 +6,24 @@ import { getSelfNode } from '../graph/model.js';
 import { getSttHealth } from '../api/client.js';
 import { showOfflineToast, clearOfflineToast } from './toast.js';
 import { initOfflineBanner } from './offline-banner.js';
+import { applyMode, recallRole } from './mode.js';
 
 function init() {
-  document.documentElement.classList.add('elderly-mode');
-  document.body.classList.add('mode-elderly');
-  var savedScale = localStorage.getItem('fontSize');
-  if (savedScale) {
-    var scale = parseFloat(savedScale);
-    if (!isNaN(scale) && scale > 0) {
-      document.documentElement.style.setProperty('--font-scale', String(scale));
-      document.documentElement.style.setProperty('--font-size', Math.round(scale * 16) + 'px');
-    } else {
-      document.documentElement.style.setProperty('--font-scale', '1');
-      document.documentElement.style.setProperty('--font-size', '16px');
-    }
-  } else {
-    document.documentElement.style.setProperty('--font-scale', '1');
-    document.documentElement.style.setProperty('--font-size', '16px');
-  }
+  // 模式类名只经 mode.js 写入。
+  // 旧实现在这里无条件 add('elderly-mode')，而 main.js 的 api.getMe() 是异步的：
+  //   1) 骨架屏到 getMe 返回这段时间里，家属/医生也在老人端高对比主题中；
+  //   2) 更严重的是 getMe 失败 / 未知角色这条兜底路径（main.js 注释写"保留完整模式"）
+  //      从未真正回到完整模式 —— 它停在了 elderly-mode 里。
+  // 无缓存角色时不加任何模式类，即真正的完整模式。
+  applyMode(recallRole());
+
+  // 字号：只写倍率 --font-scale，像素基准交回 CSS。
+  // 旧实现在这里写内联 --font-size / font-size，内联样式特异度高于样式表，
+  // 把 styles.css 的 html.elderly-mode{font-size:calc(20px*var(--font-scale))}
+  // 整个压掉，导致老人端 root 实际一直是 16px（不是设计意图的 20px）。
+  var scale = parseFloat(localStorage.getItem('fontSize'));
+  var safe = (!isNaN(scale) && scale > 0) ? scale : 1;
+  document.documentElement.style.setProperty('--font-scale', String(safe));
   loadState();
   getSelfNode();
 

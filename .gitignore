@@ -96,3 +96,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# 试点导出与本地临时库
+backend/_p2_*.csv
+backend/_p2_*.db
