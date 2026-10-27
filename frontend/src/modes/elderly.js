@@ -8,6 +8,7 @@ import { state } from '../state.js';
 import { connect as wsConnect, send as wsSend, isConnected } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 import { cacheMessages, getCachedMessages } from '../db/offline.js';
+import { savePendingAudio, getPendingAudioList, countPendingAudio, deletePendingAudio } from '../db/offline.js';
 import * as vs from '../3d/view-switcher.js';
 
 // story-7 主路径契约（PRD pilot-p0-repair）：
@@ -16,6 +17,7 @@ import * as vs from '../3d/view-switcher.js';
 // 后端转写失败 → 重试卡（内存保底 blob），绝不静默用预览文本入库；
 // story-1 会把保底升级为 IndexedDB 离线补传。
 var _pendingBlob = null;   // 待补传的录音（内存保底）
+var _pendingStoreId = null; // story-1：该录音在 IndexedDB pendingAudio 里的 id
 var _recording = false;    // SR / recorder 任一活动中
 
 export function renderElderlyMode(container) {
@@ -62,6 +64,13 @@ export function renderElderlyMode(container) {
   // 加载今日回忆和家属留言
   loadTodayMemory();
   loadFamilyMessages();
+
+  // story-1：打开即检查待存档录音；网络恢复时自动补传（监听器只挂一次）
+  autoRetryPending();
+  if (!window.__pendingAudioOnlineHooked) {
+    window.__pendingAudioOnlineHooked = true;
+    window.addEventListener('online', function() { autoRetryPending(); });
+  }
 
   // 启动 WebSocket
   var token = getToken();
@@ -220,6 +229,10 @@ function renderVoiceArea() {
   });
   wrap.appendChild(preview);
 
+  // story-1：待存档入口——转写失败的录音留在手机上，可补传/重听/删除
+  var pendingArea = el('div', { id: 'elderly-pending-area', style: { marginTop: '12px' } });
+  wrap.appendChild(pendingArea);
+
   // 语音编辑器容器
   var editorContainer = el('div', {
     id: 'elderly-voice-editor',
@@ -362,17 +375,24 @@ function stopRecording(btn, plan) {
   btn._sr = null;
 }
 
-function beginUpload(blob) {
+function beginUpload(blob, storeId) {
   var btn = document.getElementById('elderly-rec-btn');
   var preview = document.getElementById('elderly-voice-preview');
   if (preview) preview.style.display = 'none';
-  _pendingBlob = blob;   // 内存保底；story-1 升级为 IndexedDB
+  _pendingBlob = blob;              // 内存保底；真实留底在 IndexedDB（下方失败路径）
+  _pendingStoreId = storeId || null;
   uploadAudio(blob).then(function(result) {
     _pendingBlob = null;
+    if (_pendingStoreId != null) {
+      // 补传成功：清除 IndexedDB 里的留底
+      deletePendingAudio(_pendingStoreId).catch(function() {});
+      _pendingStoreId = null;
+    }
     if (btn) _setBtnIdle(btn);
     if (result.audio_metrics) {
       state.lastAudioMetrics = result.audio_metrics;
     }
+    renderPendingArea();
     // 最终文本 = 后端转写结果（含词典热词与置信度），绝不是浏览器预览
     showVoiceEditor(result.text || '', result.confidence_map || result.words || null, {
       provider: result.source,
@@ -382,7 +402,20 @@ function beginUpload(blob) {
   }).catch(function(err) {
     console.error('STT upload failed:', err);
     if (btn) _setBtnIdle(btn);
-    showRetryCard(blob);
+    // story-1：失败先落 IndexedDB（内存只是过渡），再出重试卡；
+    // 从留底发起的重试失败不重复入库
+    if (_pendingStoreId != null) {
+      showRetryCard(blob);
+    } else {
+      savePendingAudio(blob).then(function(id) {
+        _pendingStoreId = id;
+        showRetryCard(blob);
+        renderPendingArea();
+      }).catch(function() {
+        // 存储配额等异常：退化为内存保底，仍出重试卡
+        showRetryCard(blob);
+      });
+    }
   });
 }
 
@@ -408,7 +441,7 @@ function showRetryCard(blob) {
     style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
     onclick: function() {
       container.innerHTML = '';
-      beginUpload(blob);
+      beginUpload(blob, _pendingStoreId);
     }
   }, '再试一次'));
   btnRow.appendChild(el('button', {
@@ -422,6 +455,126 @@ function showRetryCard(blob) {
   }, '改用打字'));
   card.appendChild(btnRow);
   container.appendChild(card);
+}
+
+// ---------- story-1：待存档录音（IndexedDB 保底 + 自动补传） ----------
+
+function autoRetryPending() {
+  renderPendingArea();
+  // 未登录时不自动补传（/stt 需要认证），入口卡会提示"登录后才能补传"
+  if (!isLoggedIn()) return;
+  countPendingAudio().then(function(n) {
+    if (n > 0 && navigator.onLine) retryAllPending(true);
+  }).catch(function() {});
+}
+
+function renderPendingArea() {
+  var area = document.getElementById('elderly-pending-area');
+  if (!area) return;
+  countPendingAudio().then(function(n) {
+    area.innerHTML = '';
+    if (!n) { area.style.display = 'none'; return; }
+    area.style.display = 'block';
+    var card = el('div', {
+      style: {
+        background: 'var(--bg2)', borderRadius: '12px', padding: '14px',
+        border: '2px solid var(--warn, #c69214)',
+      }
+    });
+    var msg = '你有 ' + n + ' 条回忆待存档' + (isLoggedIn() ? '' : '（登录后才能补传）');
+    if (area.__resultMsg) { msg = area.__resultMsg; area.__resultMsg = null; }
+    card.appendChild(el('div', {
+      style: { fontSize: '1.05rem', color: 'var(--ink)', fontWeight: '700' }
+    }, msg));
+    var row = el('div', {
+      style: { display: 'flex', gap: '10px', marginTop: '10px', flexWrap: 'wrap' }
+    });
+    if (isLoggedIn()) {
+      row.appendChild(el('button', {
+        className: 'cg-btn btn-primary',
+        style: { fontSize: '1rem', padding: '0.6rem 1rem' },
+        onclick: function() { retryAllPending(false); }
+      }, '全部补传'));
+    }
+    row.appendChild(el('button', {
+      className: 'cg-btn',
+      style: { fontSize: '1rem', padding: '0.6rem 1rem' },
+      onclick: playLatestPending
+    }, '重听最新一条'));
+    row.appendChild(el('button', {
+      className: 'cg-btn',
+      style: { fontSize: '1rem', padding: '0.6rem 1rem' },
+      onclick: deleteAllPending
+    }, '删除'));
+    card.appendChild(row);
+    area.appendChild(card);
+  }).catch(function() { area.innerHTML = ''; });
+}
+
+function retryAllPending(silent) {
+  var area = document.getElementById('elderly-pending-area');
+  getPendingAudioList().then(function(items) {
+    if (!items.length) { renderPendingArea(); return; }
+    var success = 0;
+    var chain = Promise.resolve();
+    items.forEach(function(item) {
+      chain = chain.then(function() {
+        return uploadAudio(item.blob).then(function(result) {
+          // 补传成功 = 后端转写文本直接入库（老人已口头确认过要保存）
+          return submitSession(result.text || '', result.audio_metrics || null, {
+            asr_provider: result.source,
+            asr_confidence: result.confidence,
+          }, { silent: true }).then(function() {
+            success++;
+            return deletePendingAudio(item.id);
+          });
+        }).catch(function(err) {
+          // 该条保留在 IndexedDB，下一轮（打开应用/网络恢复）再试
+          console.warn('pending audio retry failed:', err);
+        });
+      });
+    });
+    return chain.then(function() {
+      if (area) {
+        if (success > 0) {
+          area.__resultMsg = '上次的回忆已经存好啦' +
+            (items.length - success > 0 ? '；还有 ' + (items.length - success) + ' 条没成功，下次再试' : '');
+        } else if (!silent) {
+          area.__resultMsg = '这次没成功，等网络好了再试试';
+        }
+      }
+      renderPendingArea();
+    });
+  }).catch(function() { renderPendingArea(); });
+}
+
+function playLatestPending() {
+  getPendingAudioList().then(function(items) {
+    if (!items.length) return;
+    var last = items[items.length - 1];
+    var url = URL.createObjectURL(last.blob);
+    var audio = new Audio(url);
+    audio.play().catch(function() {});
+    audio.addEventListener('ended', function() { URL.revokeObjectURL(url); });
+  }).catch(function() {});
+}
+
+function deleteAllPending() {
+  countPendingAudio().then(function(n) {
+    if (!n) return;
+    if (!window.confirm('确定删掉这 ' + n + ' 条没存上的录音吗？删了就找不回来了。')) return;
+    getPendingAudioList().then(function(items) {
+      var chain = Promise.resolve();
+      items.forEach(function(item) {
+        chain = chain.then(function() { return deletePendingAudio(item.id); });
+      });
+      return chain;
+    }).then(function() {
+      _pendingBlob = null;
+      _pendingStoreId = null;
+      renderPendingArea();
+    }).catch(function() { renderPendingArea(); });
+  }).catch(function() {});
 }
 
 function showManualInput() {
@@ -453,13 +606,19 @@ function showManualInput() {
   ta.focus();
 }
 
-function submitSession(text, audioMetrics, asrInfo) {
+function submitSession(text, audioMetrics, asrInfo, opts) {
+  opts = opts || {};
   // day_number 传 0 = 未指定哨兵，由后端按首条会话日起算（story-8）
-  createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
+  var p = createSession(0, text, 'mandarin', audioMetrics, asrInfo).then(function() {
     var content = document.getElementById('elderly-memory-content');
     if (content) content.textContent = text;
-    // 顺带堵掉旧版静默吞错（完整三态保存反馈归 story-2）
-  }).catch(function() {
+  });
+  if (opts.silent) {
+    // 自动补传路径：失败不弹 alert，由调用方统计；错误原样抛给链
+    return p;
+  }
+  // 顺带堵掉旧版静默吞错（完整三态保存反馈归 story-2，下一批）
+  return p.catch(function() {
     alert('没存上，请再试一次。');
   });
 }
