@@ -1,14 +1,17 @@
-// ============ 记忆衰退分析 UI ============
-// 医生端弹窗：展示衰退风险分数 + 四维度分析 + 实体时间线
+// ============ 脑健康小结 UI（story-9 重写） ============
+// 顶部卡片渲染后端 tier 引擎结论（绿/琥珀/红 + 可做的下一步）——
+// 旧版渲染的 decline_score/level 三档已被取代（PRD story-9 AC5）。
+// 详细分析（四维 + 时间线）保留给愿意深看的家属/医生。
 import { el } from './components.js';
 import { getDeclineAnalysis, getDeclineTimeline } from '../api/client.js';
+import { tierDisplay } from './tier-copy.js';
 import { trapFocus } from './interactions.js';
 
 var overlayEl = null;
 var _restoreFocus = null;
 var _savedFocus = null;
 
-// 打开衰退分析弹窗
+// 打开小结弹窗
 export function openDeclinePanel() {
   closeDeclinePanel();
   _savedFocus = document.activeElement;
@@ -17,7 +20,7 @@ export function openDeclinePanel() {
     id: 'decline-overlay',
     role: 'dialog',
     'aria-modal': 'true',
-    'aria-label': '记忆衰退分析',
+    'aria-label': '脑健康小结',
   });
   document.body.appendChild(overlay);
   overlayEl = overlay;
@@ -47,14 +50,14 @@ export function closeDeclinePanel() {
 
 // 加载中
 function renderLoading() {
-  var modal = buildModalShell('记忆衰退分析');
-  modal.body.appendChild(el('div', { className: 'decline-loading' }, '正在分析近期叙事数据…'));
+  var modal = buildModalShell('脑健康小结');
+  modal.body.appendChild(el('div', { className: 'decline-loading' }, '正在汇总本周记录…'));
   paint(modal);
 }
 
 // 出错
 function renderError(err) {
-  var modal = buildModalShell('记忆衰退分析');
+  var modal = buildModalShell('脑健康小结');
   modal.body.appendChild(el('div', { className: 'decline-error' },
     '加载失败：' + (err && err.offline ? '无法连接服务器，请检查网络' : (err && err.message) || '未知错误')));
   paint(modal);
@@ -62,29 +65,113 @@ function renderError(err) {
 
 // 主体内容
 function renderContent(analysis, timeline) {
-  var modal = buildModalShell('记忆衰退分析');
+  var modal = buildModalShell('脑健康小结');
 
-  // 顶部：衰退风险分数 + 等级
-  modal.body.appendChild(renderRiskCard(analysis));
+  // 顶部：tier 引擎结论卡（绿/琥珀/红 + 可做的下一步）
+  var card = buildTierCard(analysis);
+  modal.body.appendChild(card);
 
-  // 四个维度
-  modal.body.appendChild(renderSectionTitle('一、实体遗忘'));
+  modal.body.appendChild(renderSectionTitle('详细分析 · 一、实体遗忘'));
   modal.body.appendChild(renderForgottenEntities(analysis));
 
-  modal.body.appendChild(renderSectionTitle('二、叙事复杂度趋势'));
+  modal.body.appendChild(renderSectionTitle('详细分析 · 二、叙事复杂度趋势'));
   modal.body.appendChild(renderSimplification(analysis));
 
-  modal.body.appendChild(renderSectionTitle('三、重复叙述检测'));
+  modal.body.appendChild(renderSectionTitle('详细分析 · 三、重复叙述检测'));
   modal.body.appendChild(renderRepetition(analysis));
 
-  modal.body.appendChild(renderSectionTitle('四、匿名化趋势'));
+  modal.body.appendChild(renderSectionTitle('详细分析 · 四、匿名化趋势'));
   modal.body.appendChild(renderAnonymization(analysis));
 
-  // 时间线视图
   modal.body.appendChild(renderSectionTitle('实体出现 / 消失时间线'));
   modal.body.appendChild(renderTimeline(timeline));
 
   paint(modal);
+}
+
+// ---------- story-9：tier 风险卡 ----------
+
+// 供 family 专属模式内嵌渲染：container.appendChild(renderTierInto(el('div'), analysis))
+export function renderTierInto(container, analysis) {
+  container.innerHTML = '';
+  container.appendChild(buildTierCard(analysis));
+  return container;
+}
+
+var TONE_COLORS = {
+  ok:     { border: '#4A7C4A', bg: 'rgba(74,124,74,0.10)',  dot: '#4A7C4A' },
+  warn:   { border: '#B8860B', bg: 'rgba(184,134,11,0.10)', dot: '#B8860B' },
+  danger: { border: '#C75B5B', bg: 'rgba(199,91,91,0.10)',  dot: '#C75B5B' },
+  muted:  { border: '#8a8a8a', bg: 'rgba(128,128,128,0.08)', dot: '#8a8a8a' },
+};
+
+function buildTierCard(analysis) {
+  var d = tierDisplay(analysis);
+  var tone = TONE_COLORS[d.tone] || TONE_COLORS.muted;
+
+  var card = el('div', {
+    style: {
+      border: '2px solid ' + tone.border, background: tone.bg,
+      borderRadius: '14px', padding: '16px', marginBottom: '16px',
+    }
+  });
+
+  // 色点 + 标题（大字号，家属一眼懂）
+  var head = el('div', {
+    style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }
+  });
+  head.appendChild(el('span', {
+    'aria-hidden': 'true',
+    style: { width: '16px', height: '16px', borderRadius: '50%', background: tone.dot, flexShrink: '0' }
+  }));
+  head.appendChild(el('span', {
+    style: { fontSize: '1.25rem', fontWeight: '800', color: 'var(--ink)' }
+  }, d.title));
+  card.appendChild(head);
+
+  // 数据不足时说明缺多少（诚实，不编等级）
+  if (d.insufficient) {
+    card.appendChild(el('div', {
+      style: { fontSize: '0.95rem', color: 'var(--muted)', marginBottom: '6px' }
+    }, d.reason || '有效记录还不足以下结论。'));
+  }
+
+  // 值得留意的信号（只列 warning/danger，生活语言，来自 tier-copy 映射）
+  if (d.signals.length > 0) {
+    var list = el('div', { style: { margin: '8px 0' } });
+    d.signals.forEach(function(s) {
+      var row = el('div', {
+        style: { display: 'flex', gap: '8px', alignItems: 'baseline', padding: '3px 0', fontSize: '0.98rem', color: 'var(--ink2)' }
+      });
+      row.appendChild(el('span', {
+        style: { width: '8px', height: '8px', borderRadius: '50%', background: s.severity === 'danger' ? tone.dot : '#B8860B', display: 'inline-block', flexShrink: '0' }
+      }));
+      row.appendChild(document.createTextNode(s.label));
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+  }
+
+  // 下一步：advice 文字 + 真按钮（发关怀/联系医生依赖家属绑定，P1 批次补）
+  var advice = el('div', {
+    style: { fontSize: '1.02rem', fontWeight: '700', color: 'var(--ink)', margin: '10px 0 12px' }
+  }, d.advice);
+  card.appendChild(advice);
+
+  if (!d.insufficient) {
+    var btn = el('button', {
+      className: 'cg-btn btn-primary',
+      style: { fontSize: '1rem', padding: '0.6rem 1.1rem' },
+      onclick: function() {
+        import('./scale.js').then(function(mod) { mod.openScalePanel(); });
+      }
+    }, '陪老人做一次认知量表');
+    card.appendChild(btn);
+  }
+
+  // 色盲安全：颜色之外有文字等级（title 本身即等级）+ aria
+  card.setAttribute('role', 'status');
+  return card;
 }
 
 // 弹窗外壳
@@ -114,32 +201,8 @@ function renderSectionTitle(text) {
   return el('div', { className: 'decline-section-title' }, text);
 }
 
-// 风险分数卡片
-function renderRiskCard(analysis) {
-  var score = analysis.decline_score || 0;
-  var level = analysis.level || '正常';
-  var levelCls = level === '警告' ? 'danger' : level === '关注' ? 'warn' : 'ok';
-  var desc = level === '数据不足'
-    ? (analysis.message || '近期或历史数据不足')
-    : level === '警告'
-      ? '多项指标显著恶化，建议尽快专业评估'
-      : level === '关注'
-        ? '部分指标出现下降趋势，建议持续观察'
-        : '近期叙事与历史相比无显著衰退';
-
-  var card = el('div', { className: 'decline-risk-card ' + levelCls }, [
-    el('div', { className: 'decline-risk-num' }, String(score)),
-    el('div', { className: 'decline-risk-meta' }, [
-      el('div', { className: 'decline-risk-level' }, level),
-      el('div', { className: 'decline-risk-desc' }, desc),
-      el('div', { className: 'decline-risk-window' },
-        '对比窗口：' + (analysis.window_days || 7) + ' 天 · ' +
-        '近期 ' + (analysis.recent_session_count || 0) + ' 条 / ' +
-        '历史 ' + (analysis.previous_session_count || 0) + ' 条'),
-    ]),
-  ]);
-  return card;
-}
+// （旧版 renderRiskCard：decline_score 大数字 + 正常/关注/警告三档——
+//  story-9 AC5 已删除，由 buildTierCard 的 tier 结论取代，不再双轨展示）
 
 // 实体遗忘
 function renderForgottenEntities(analysis) {

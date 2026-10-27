@@ -715,6 +715,14 @@ function renderLeftPanel() {
         el('div', { className: 'fam-stat' }, [el('div', { className: 'fam-stat-num' }, String(fEdges)), el('div', { className: 'fam-stat-label' }, '关系连接')]),
         el('div', { className: 'fam-stat' }, [el('div', { className: 'fam-stat-num' }, String(fAnon)), el('div', { className: 'fam-stat-label' }, '匿名节点')]),
       ]),
+      // story-9 AC4：家属视图入口（旧版"衰退分析"按钮只在医生分支，家属点不到）
+      el('button', {
+        className: 'cg-btn',
+        style: { width: '100%', marginTop: '10px' },
+        onclick: function() {
+          import('../decline.js').then(function(mod) { mod.openDeclinePanel(); });
+        }
+      }, '🧠 查看本周脑健康小结'),
     ]));
     return panel;
   }

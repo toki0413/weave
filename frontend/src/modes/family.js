@@ -109,6 +109,19 @@ export function renderFamilyMode(container, elderlyData) {
   }
   app.appendChild(hero);
 
+  // story-9：脑健康小结卡——tier 引擎结论直达家属端专属模式（AC4：
+  // 任意形态都有入口，旧版只有完整模式医生分支里藏着按钮）
+  var tierSlot = el('div', { style: { flexShrink: '0' } });
+  app.appendChild(tierSlot);
+  Promise.all([
+    import('../api/client.js'),
+    import('../ui/decline.js'),
+  ]).then(function(mods) {
+    mods[0].getDeclineAnalysis(7).then(function(a) {
+      mods[1].renderTierInto(tierSlot, a);
+    }).catch(function() {});
+  }).catch(function() {});
+
   // 今日异常提醒（紧凑）
   if (anomalies.length > 0) {
     var alertBox = el('div', {
