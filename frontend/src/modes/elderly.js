@@ -218,6 +218,16 @@ function renderVoiceArea() {
   }, '🎤 按住说话');
   wrap.appendChild(recBtn);
 
+  // story-6：计时条（录音中显示剩余时间）
+  var timer = el('div', {
+    id: 'elderly-rec-timer',
+    style: {
+      marginTop: '10px', fontSize: '1.4rem', fontWeight: '700',
+      color: 'var(--muted)', fontVariantNumeric: 'tabular-nums', display: 'none',
+    }
+  }, '');
+  wrap.appendChild(timer);
+
   // SR 实时预览（仅预览，不是最终文本；后端转写结果到达后由编辑器取代）
   var preview = el('div', {
     id: 'elderly-voice-preview',
@@ -243,6 +253,13 @@ function renderVoiceArea() {
   return wrap;
 }
 
+function _setTimer(show, text) {
+  var t = document.getElementById('elderly-rec-timer');
+  if (!t) return;
+  t.style.display = show ? 'block' : 'none';
+  if (text != null) t.textContent = text;
+}
+
 function _setBtnIdle(btn) {
   btn.textContent = '🎤 按住说话';
   btn.style.background = '';
@@ -250,12 +267,14 @@ function _setBtnIdle(btn) {
   btn.disabled = false;
   btn.style.opacity = '1';
   btn.style.cursor = 'pointer';
+  _setTimer(false);
 }
 
 function _setBtnRecording(btn) {
   btn.textContent = '🔴 录音中…（点击停止）';
   btn.style.background = '#ffebee';
   btn.style.color = '#c62828';
+  _setTimer(true, '');
 }
 
 function _setBtnUploading(btn) {
@@ -265,6 +284,7 @@ function _setBtnUploading(btn) {
   btn.style.color = '';
   btn.style.opacity = '0.7';
   btn.style.cursor = 'wait';
+  _setTimer(false);
 }
 
 function handleRecord() {
@@ -329,23 +349,49 @@ function startRecording(btn, plan) {
   }
 
   import('../audio/recorder.js').then(function(mod) {
-    // 时长上限维持现状（30s/静默 1.5s 的对齐是 story-6，不在本批）
-    var recorder = new mod.VoiceRecorder({ maxDuration: 30000, silenceTimeout: 1500 });
+    // story-6：60 秒与日课对齐（到限询问可延长）；静默 3 秒只提醒不打断
+    var recorder = new mod.VoiceRecorder({ maxDuration: 60000, silenceTimeout: 3000 });
     recorder.onStart = function() {
       if (btn) _setBtnRecording(btn);
+      try { mod.playBeep('start'); } catch (e) {}
+    };
+    recorder.onTick = function(remainingMs) {
+      var sec = Math.max(0, Math.ceil(remainingMs / 1000));
+      _setTimer(true, '还可说 ' + Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2));
+    };
+    recorder.onSilence = function() {
+      // 停顿不是结束：提示音 + 温和询问，录音继续
+      try { mod.playBeep('stop'); } catch (e) {}
+      var p = document.getElementById('elderly-voice-preview');
+      if (p && p.style.display !== 'none') p.textContent = '还在吗？说完点一下停止就行。';
+    };
+    recorder.onLimitReached = function() {
+      try { mod.playBeep('stop'); } catch (e) {}
+      showLimitChoice(recorder, btn);
     };
     recorder.onStop = function(blob) {
       // 唯一的上传触发点：录音真正结束才进入转写，SR 仅为预览
       _recording = false;
       try { if (sr) { sr.onend = function() {}; sr.stop(); } } catch (e) {}
+      var c = document.getElementById('elderly-voice-editor');
+      if (c) c.innerHTML = '';   // 清掉可能还挂着的到限询问
       if (btn) _setBtnUploading(btn);
       beginUpload(blob);
     };
-    recorder.onError = function() {
+    recorder.onError = function(err) {
+      // story-4：不再无声复位——按错误类型给指引或打字替代
       _recording = false;
       if (btn) _setBtnIdle(btn);
       var p = document.getElementById('elderly-voice-preview');
       if (p) { p.style.display = 'none'; }
+      var name = err && (err.name || (err.error && err.error.name));
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        showPermissionGuide();
+      } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        showMicMissing();
+      } else {
+        showMicGenericError();
+      }
     };
     recorder.start();
     btn._recorder = recorder;
@@ -575,6 +621,94 @@ function deleteAllPending() {
       renderPendingArea();
     }).catch(function() { renderPendingArea(); });
   }).catch(function() {});
+}
+
+// story-6：到达上限不静默截断——询问"继续/结束"，麦克风保持开着等回答
+function showLimitChoice(recorder, btn) {
+  var container = document.getElementById('elderly-voice-editor');
+  if (!container) return;
+  container.innerHTML = '';
+  var box = el('div', {
+    style: {
+      border: '2px solid var(--warn, #c69214)', borderRadius: '12px',
+      padding: '14px', textAlign: 'center',
+    }
+  });
+  box.appendChild(el('div', {
+    style: { fontSize: '1.15rem', fontWeight: '700', color: 'var(--ink)', marginBottom: '12px' }
+  }, '时间到啦，还想再说一会儿吗？'));
+  var row = el('div', { style: { display: 'flex', gap: '10px', justifyContent: 'center' } });
+  row.appendChild(el('button', {
+    className: 'cg-btn btn-primary',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() {
+      container.innerHTML = '';
+      recorder.extend(30000);   // 延长 30 秒，计时恢复
+    }
+  }, '再说半分钟'));
+  row.appendChild(el('button', {
+    className: 'cg-btn',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() { recorder.stop(); }   // onStop 接手：进转写
+  }, '就这样'));
+  box.appendChild(row);
+  container.appendChild(box);
+}
+
+// story-4：按错误类型给可行动的指引，绝不回到"按钮没反应"的死寂
+function _micGuideCard(title, lines) {
+  var container = document.getElementById('elderly-voice-editor');
+  if (!container) return;
+  container.innerHTML = '';
+  var box = el('div', {
+    style: {
+      border: '2px solid var(--warn, #c69214)', borderRadius: '12px', padding: '16px',
+    }
+  });
+  box.appendChild(el('div', {
+    style: { fontSize: '1.2rem', fontWeight: '700', color: 'var(--ink)', marginBottom: '10px' }
+  }, title));
+  (lines || []).forEach(function(line) {
+    box.appendChild(el('div', {
+      style: { fontSize: '1.05rem', color: 'var(--ink2)', lineHeight: '1.8' }
+    }, line));
+  });
+  var row = el('div', { style: { display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap' } });
+  row.appendChild(el('button', {
+    className: 'cg-btn btn-primary',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() { showManualInput(); }
+  }, '用打字告诉我'));
+  row.appendChild(el('button', {
+    className: 'cg-btn',
+    style: { fontSize: '1.05rem', padding: '0.7rem 1.2rem' },
+    onclick: function() { container.innerHTML = ''; }
+  }, '我知道了'));
+  box.appendChild(row);
+  container.appendChild(box);
+}
+
+function showPermissionGuide() {
+  _micGuideCard('需要打开麦克风才能说话', [
+    '第一步：点一下浏览器地址栏左边的小图标（锁 🔒 或设置样子的按钮）',
+    '第二步：找到"麦克风"，选"允许"',
+    '第三步：回来再点"按住说话"这个按钮',
+    '找不到也没关系——直接用打字的方式告诉我今天发生了什么。',
+  ]);
+}
+
+function showMicMissing() {
+  _micGuideCard('这台设备上找不到麦克风', [
+    '手机请用带麦克风的设备说话，或连接耳机麦克风。',
+    '也可以直接用打字的方式告诉我今天发生了什么。',
+  ]);
+}
+
+function showMicGenericError() {
+  _micGuideCard('麦克风暂时打不开', [
+    '可以关掉其他正在用麦克风的应用（电话、视频会议）再试一次。',
+    '或者直接用打字的方式告诉我今天发生了什么。',
+  ]);
 }
 
 function showManualInput() {
