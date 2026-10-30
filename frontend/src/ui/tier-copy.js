@@ -76,5 +76,8 @@ export function tierDisplay(analysis) {
     insufficient: tier === 'insufficient_data',
     validWeeks: a.valid_weeks || 0,
     maxAttainableZ: a.max_attainable_z || 0,
+    // 产品定位决策：tier 是"附带的趋势观察"，机制未标定——对外材料必须带这句
+    configVersion: a.tier_config_version || '',
+    calibrationNote: '趋势观察 · 机制未标定，不构成任何诊断',
   };
 }

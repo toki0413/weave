@@ -155,6 +155,8 @@ function _renderForm() {
     // 注册时才显示手机号和姓名（都是可选）
     phoneWrap.style.display = m === 'register' ? 'block' : 'none';
     nameWrap.style.display = m === 'register' ? 'block' : 'none';
+    roleWrap.style.display = m === 'register' ? 'block' : 'none';
+    if (m === 'register') _setRole(_selectedRole);   // 应用预设身份
     submitBtn.textContent = m === 'login' ? '登录' : '注册';
     _showError('');
   }
@@ -176,6 +178,44 @@ function _renderForm() {
   card.appendChild(phoneWrap);
   card.appendChild(nameWrap);
   card.appendChild(passwordWrap);
+
+  // 注册身份：老人本人 / 家属（story-5 前置——此前硬编码 elderly，
+  // 家属账号只能错建成老人再靠绑定端点救）
+  var roleWrap = el('div', { style: { marginBottom: '14px', display: 'none' } });
+  roleWrap.appendChild(el('div', {
+    style: { marginBottom: '6px', fontSize: '0.9rem', fontWeight: '600' }
+  }, '这个账号是给谁用的？'));
+  var roleRow = el('div', { style: { display: 'flex', gap: '8px' } });
+  var roleElderly = el('button', {
+    id: 'auth-role-elderly',
+    style: { flex: 1, padding: '10px', fontSize: '0.95rem' },
+    onclick: function() { _setRole('elderly'); },
+  }, '我自己用（老人）');
+  var roleFamily = el('button', {
+    id: 'auth-role-family',
+    style: { flex: 1, padding: '10px', fontSize: '0.95rem' },
+    onclick: function() { _setRole('family'); },
+  }, '我是家属');
+  roleRow.appendChild(roleElderly);
+  roleRow.appendChild(roleFamily);
+  roleWrap.appendChild(roleRow);
+  roleWrap.appendChild(el('div', {
+    id: 'auth-role-hint',
+    style: { marginTop: '6px', fontSize: '0.8rem', color: 'var(--muted)' }
+  }, ''));
+  function _setRole(r) {
+    _selectedRole = r;
+    var active = { background: 'var(--accent)', color: '#fff' };
+    var idle = { background: '#fff', color: 'var(--ink2)' };
+    var pick = r === 'elderly' ? active : idle;
+    var other = r === 'elderly' ? idle : active;
+    roleElderly.style.background = pick.background; roleElderly.style.color = pick.color;
+    roleFamily.style.background = other.background; roleFamily.style.color = other.color;
+    document.getElementById('auth-role-hint').textContent =
+      r === 'elderly' ? '注册后把手机号告诉家人，他们就能在家属端关联您。'
+                      : '注册后需要输入老人的手机号或姓名完成关联。';
+  }
+  card.appendChild(roleWrap);
 
   var errorMsg = el('div', {
     id: 'auth-error',
@@ -204,7 +244,7 @@ function _renderForm() {
       withLoading(submitBtn, function() {
         var promise = mode === 'login'
           ? login(identifier, password)
-          : register(identifier, password, 'elderly', name, phone || undefined);
+          : register(identifier, password, _selectedRole, name, phone || undefined);
         return promise.then(function(data) {
           if (mode === 'register' && data.recovery_code) {
             _renderRecoveryCode(data.recovery_code);
@@ -236,12 +276,20 @@ function _renderForm() {
   }, '取消');
   card.appendChild(closeBtn);
 
+  // 分享卡 CTA 等场景预置身份：直接落到注册态并选好角色
+  if (_presetRole === 'family') setMode('register');
+
   _overlay.innerHTML = '';
   _overlay.appendChild(card);
 }
 
-function showAuthModal() {
+var _presetRole = 'elderly';   // 注册身份预置（分享卡 CTA 走 'family'）
+var _selectedRole = 'elderly';
+
+function showAuthModal(opts) {
   if (_overlay) return;
+  _presetRole = (opts && opts.role === 'family') ? 'family' : 'elderly';
+  _selectedRole = _presetRole;
   _savedFocus = document.activeElement;
   _overlay = el('div', {
     style: {
