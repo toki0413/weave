@@ -84,11 +84,24 @@ if ('serviceWorker' in navigator) {
       var result = init();
       window.__init_called__ = true;
 
+      // 分享卡 CTA 指向的注册路由（此前是死链）：正常起主应用，
+      // 骨架屏淡出后自动弹出注册弹窗并预置"我是家属"
+      var wantRegister = /^#\/register/.test(location.hash || '');
+      function maybeOpenRegister() {
+        if (!wantRegister) return;
+        wantRegister = false;
+        import('./ui/auth-modal.js').then(function(mod) {
+          mod.showAuthModal({ role: 'family' });
+        }).catch(function() {});
+      }
+
       function fadeSkeleton() {
         var skeleton = document.getElementById('skeleton');
         if (skeleton) {
           skeleton.classList.add('fade-out');
-          setTimeout(function() { skeleton.remove(); }, 500);
+          setTimeout(function() { skeleton.remove(); maybeOpenRegister(); }, 500);
+        } else {
+          maybeOpenRegister();
         }
       }
 

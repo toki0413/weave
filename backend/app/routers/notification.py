@@ -6,10 +6,13 @@ from typing import List, Optional
 from datetime import datetime, timezone
 
 from app.database import get_db
-from app.models import Notification, FamilyLink, User
+from app.models import Notification, FamilyLink, User, Session as DBSession
 from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/notification", tags=["notification"])
+
+# 漏录天数按本地日历日切天（UTC+8），与 pilot_export / weekly_baseline 同源
+_LOCAL_TZ_OFFSET_MIN = 480
 
 
 # ========== 请求/响应模型 ==========
@@ -25,6 +28,10 @@ class FamilyMemberOut(BaseModel):
     elderly_phone: Optional[str] = None
     relation: Optional[str] = None
     created_at: datetime
+    # 漏录提醒数据源（audit-24）：最近一条会话与"距今几天没记录"。
+    # 无会话时两者为 None——UI 显示"还没有记录"而不是"漏了 N 天"
+    last_session_at: Optional[datetime] = None
+    missing_days: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -229,7 +236,7 @@ def link_family_member(
             existing.relation = payload.relation
             db.commit()
             db.refresh(existing)
-        return _to_family_member_out(existing)
+        return _to_family_member_out(db, existing)
 
     link = FamilyLink(
         elderly_user_id=elderly.id,
@@ -239,7 +246,7 @@ def link_family_member(
     db.add(link)
     db.commit()
     db.refresh(link)
-    return _to_family_member_out(link)
+    return _to_family_member_out(db, link)
 
 
 @router.get("/family-members", response_model=List[FamilyMemberOut])
@@ -255,11 +262,29 @@ def list_family_members(
         .order_by(FamilyLink.created_at.desc())
         .all()
     )
-    return [_to_family_member_out(l) for l in links]
+    return [_to_family_member_out(db, l) for l in links]
 
 
-def _to_family_member_out(link: FamilyLink) -> FamilyMemberOut:
-    """把 FamilyLink + 关联的 User 信息拼成响应"""
+def _to_family_member_out(db: Session, link: FamilyLink) -> FamilyMemberOut:
+    """把 FamilyLink + 关联的 User 信息拼成响应，并附最近记录/漏录天数。
+
+    漏录天数按本地日历日（UTC+8）切天，与 pilot_export / weekly_baseline 的
+    周桶同源——否则 0:00–8:00 之间录的会被算成漏一天。只算"有没有录"，
+    不做质量判断。
+    """
+    last = (
+        db.query(DBSession.created_at)
+        .filter(DBSession.user_id == link.elderly_user_id)
+        .order_by(DBSession.created_at.desc())
+        .first()
+    )
+    last_at = last[0] if last else None
+    missing_days = None
+    if last_at is not None:
+        from datetime import timedelta
+        loc_last = (last_at + timedelta(minutes=_LOCAL_TZ_OFFSET_MIN)).date()
+        loc_now = (datetime.now(timezone.utc) + timedelta(minutes=_LOCAL_TZ_OFFSET_MIN)).date()
+        missing_days = max(0, (loc_now - loc_last).days)
     return FamilyMemberOut(
         link_id=link.id,
         elderly_user_id=link.elderly_user_id,
@@ -267,4 +292,6 @@ def _to_family_member_out(link: FamilyLink) -> FamilyMemberOut:
         elderly_phone=link.elderly.phone if link.elderly else None,
         relation=link.relation,
         created_at=link.created_at,
+        last_session_at=last_at,
+        missing_days=missing_days,
     )

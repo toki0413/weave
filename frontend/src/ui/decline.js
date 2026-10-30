@@ -171,6 +171,12 @@ function buildTierCard(analysis) {
 
   // 色盲安全：颜色之外有文字等级（title 本身即等级）+ aria
   card.setAttribute('role', 'status');
+
+  // 未标定声明（产品定位：tier 是附带的趋势观察，不承诺准确率）
+  var foot = el('div', {
+    style: { marginTop: '10px', fontSize: '0.78rem', color: 'var(--muted)' }
+  }, d.calibrationNote + (d.configVersion ? '（' + d.configVersion + '）' : ''));
+  card.appendChild(foot);
   return card;
 }
 

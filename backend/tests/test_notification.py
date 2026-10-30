@@ -170,6 +170,43 @@ def test_list_family_members(client):
     assert "老人B" in names
 
 
+def test_family_members_missing_days_computed(client, db_session):
+    """audit-24：绑定响应带最近记录与漏录天数（家属端漏录提醒的数据源）"""
+    _, eld_headers = _register_user(client, "13900000021", role="elderly", name="漏录测试")
+    _, fam_headers = _register_user(client, "13900000022", role="family", name="家属")
+    client.post("/api/v1/notification/family-link", headers=fam_headers,
+                json={"elderly_username": "13900000021", "relation": "子女"})
+    r = client.post("/api/v1/session/", headers=eld_headers,
+                    json={"narrative_input": {"text": "今天和老王下棋"}})
+    assert r.status_code == 200, r.text
+    sid = r.json()["id"]
+
+    # 无时区歧义：把会话回拨到 3 天前的正午（+480 后仍是同一天）
+    target = datetime.now(timezone.utc) - timedelta(days=3)
+    target = target.replace(hour=4, minute=0, second=0)  # 12:00 北京时间
+    row = db_session.get(DBSession, sid)
+    row.created_at = target
+    db_session.commit()
+
+    data = client.get("/api/v1/notification/family-members", headers=fam_headers).json()
+    m = data[0]
+    assert m["last_session_at"] is not None
+    assert m["missing_days"] == 3, f"回拨 3 天应得 missing_days=3，实得 {m['missing_days']}"
+
+
+def test_family_members_no_session_missing_days_none(client):
+    """从未记录的老人：last_session_at/missing_days 均为 null——UI 显示"还没有记录"
+    而不是把未知当成就漏了很大天数"""
+    _register_user(client, "13900000023", role="elderly", name="从没录过")
+    _, fam_headers = _register_user(client, "13900000024", role="family", name="家属")
+    client.post("/api/v1/notification/family-link", headers=fam_headers,
+                json={"elderly_username": "13900000023"})
+
+    data = client.get("/api/v1/notification/family-members", headers=fam_headers).json()
+    assert data[0]["last_session_at"] is None
+    assert data[0]["missing_days"] is None
+
+
 def test_list_family_members_empty(client, auth_headers):
     """没有绑定任何老人时返回空列表"""
     r = client.get("/api/v1/notification/family-members", headers=auth_headers["headers"])

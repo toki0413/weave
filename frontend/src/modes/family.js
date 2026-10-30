@@ -1,7 +1,7 @@
 // ============ FAMILY MODE (3D Nebula Immersive) ============
 // 家属端：默认 3D 星云浏览，飞行漫游，时间筛选，情感色彩
 import { el } from '../ui/components.js';
-import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare, generateMemoryCard, getLatestMemoryCard, trackEvent } from '../api/client.js';
+import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare, generateMemoryCard, getLatestMemoryCard, trackEvent, getFamilyMembers, linkFamilyMember, invalidateCache } from '../api/client.js';
 import { connect as wsConnect, send as wsSend, isConnected, isUsingSSE } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 
@@ -79,10 +79,177 @@ export function renderFamilyMode(container, elderlyData) {
       fontSize: '0.8rem',
       fontWeight: '700',
       display: unreadCount > 0 ? 'block' : 'none',
-    }
+      cursor: 'pointer',
+    },
+    title: '点击查看通知',
+    onclick: openNoticeSheet,
   }, String(unreadCount));
   headerBar.appendChild(badge);
   app.appendChild(headerBar);
+
+  // ---------- 家属-老人绑定闭环（audit-5 前置 + audit-24 漏录提醒） ----------
+  // 此前 linkFamilyMember API 零调用、注册硬编码老人角色，导致关怀永远死锁
+  // （elderlyId 恒 undefined）。这里补绑定入口，并把 elderlyId 真正接给关怀发送。
+  var _links = [];
+  var _linkIndex = 0;
+  var linksWrap = el('div', { style: { flexShrink: '0' } });
+  app.appendChild(linksWrap);
+
+  function currentElderly() {
+    if (!_links.length) return null;
+    if (_linkIndex >= _links.length) _linkIndex = 0;
+    return _links[_linkIndex];
+  }
+
+  function refreshLinks() {
+    return getFamilyMembers().then(function(list) {
+      _links = list || [];
+      renderLinks();
+    }).catch(function() {
+      _links = [];
+      renderLinks();
+    });
+  }
+
+  function renderLinks() {
+    linksWrap.innerHTML = '';
+    var cur = currentElderly();
+    data.elderlyId = cur ? cur.elderly_user_id : '';
+    if (!_links.length) {
+      linksWrap.appendChild(buildBindCard());
+      return;
+    }
+    if (_links.length > 1) linksWrap.appendChild(buildElderlySwitcher());
+
+    var name = (cur && cur.elderly_name) || '老人';
+    var line = null;
+    if (cur && cur.last_session_at == null) {
+      line = { tone: 'muted', text: name + '还没有过记录，先陪他/她说完今天这一条。' };
+    } else if (cur && cur.missing_days != null && cur.missing_days >= 2) {
+      line = { tone: 'warn', text: name + '已经 ' + cur.missing_days + ' 天没有新的回忆了。' };
+    }
+    if (line) {
+      var box = el('div', {
+        style: {
+          background: line.tone === 'warn' ? 'rgba(184,134,11,0.12)' : 'var(--bg2)',
+          border: '1px solid ' + (line.tone === 'warn' ? '#B8860B' : 'var(--rule)'),
+          borderRadius: '10px', padding: '10px 12px', marginBottom: '8px',
+          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+        }
+      });
+      box.appendChild(el('span', {
+        style: { fontSize: '0.9rem', color: 'var(--ink)', flex: 1, minWidth: '160px' }
+      }, line.text));
+      box.appendChild(el('button', {
+        className: 'btn-secondary',
+        style: { padding: '6px 12px', fontSize: '0.85rem' },
+        onclick: function() {
+          var ci = document.querySelector('textarea[placeholder^="输入文字关怀"]');
+          if (ci) { ci.focus(); ci.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        }
+      }, '发条关怀'));
+      linksWrap.appendChild(box);
+    }
+  }
+
+  function buildBindCard() {
+    var card = el('div', {
+      style: {
+        background: 'var(--bg2)', border: '2px solid var(--accent)',
+        borderRadius: '12px', padding: '14px', marginBottom: '10px',
+      }
+    });
+    card.appendChild(el('div', {
+      style: { fontWeight: '700', fontSize: '0.98rem', marginBottom: '6px', color: 'var(--ink)' }
+    }, '还没有关联老人'));
+    card.appendChild(el('div', {
+      style: { fontSize: '0.85rem', color: 'var(--muted)', marginBottom: '10px', lineHeight: 1.6 }
+    }, '输入老人注册时填的手机号或姓名，关联后就能看到他/她的记录与健康小结。'));
+    var who = el('input', {
+      style: { width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--rule)', fontSize: '0.95rem', marginBottom: '8px', boxSizing: 'border-box' },
+      placeholder: '老人的手机号或姓名',
+    });
+    var rel = el('input', {
+      style: { width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--rule)', fontSize: '0.95rem', marginBottom: '8px', boxSizing: 'border-box' },
+      placeholder: '关系（可选）：子女 / 配偶 / 其他',
+    });
+    var err = el('div', { style: { color: 'var(--danger)', fontSize: '0.85rem', minHeight: '1.2em', marginBottom: '6px' } });
+    var btn = el('button', {
+      className: 'btn-primary',
+      style: { width: '100%', padding: '10px' },
+      onclick: function() {
+        var id = who.value.trim();
+        if (!id) { err.textContent = '请先填写老人的手机号或姓名'; who.focus(); return; }
+        btn.disabled = true; btn.textContent = '关联中…';
+        linkFamilyMember(id, rel.value.trim() || null).then(function() {
+          invalidateCache('/notification/family-members');
+          return refreshLinks();
+        }).catch(function(e) {
+          err.textContent = (e && e.message) || '关联失败，请核对手机号或姓名';
+          btn.disabled = false; btn.textContent = '关联';
+        });
+      }
+    }, '关联');
+    card.appendChild(who);
+    card.appendChild(rel);
+    card.appendChild(err);
+    card.appendChild(btn);
+    return card;
+  }
+
+  function buildElderlySwitcher() {
+    var row = el('div', { style: { display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' } });
+    _links.forEach(function(l, i) {
+      row.appendChild(el('button', {
+        className: i === _linkIndex ? 'btn-primary' : 'btn-secondary',
+        style: { padding: '6px 12px', fontSize: '0.85rem' },
+        onclick: function() { _linkIndex = i; renderLinks(); }
+      }, l.elderly_name || ('老人' + (i + 1))));
+    });
+    return row;
+  }
+
+  function openNoticeSheet() {
+    var old = document.getElementById('family-notice-sheet');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var overlay = el('div', {
+      id: 'family-notice-sheet',
+      style: { position: 'fixed', inset: 0, background: 'rgba(31,27,22,0.5)', zIndex: 9000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' },
+      onclick: function(e) { if (e.target === overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+    });
+    var sheet = el('div', {
+      style: { background: 'var(--bg)', borderRadius: '16px 16px 0 0', width: '100%', maxWidth: '560px', maxHeight: '70vh', overflowY: 'auto', padding: '16px' }
+    });
+    var head = el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' } });
+    head.appendChild(el('strong', { style: { fontSize: '1rem' } }, '通知'));
+    head.appendChild(el('button', {
+      style: { border: 'none', background: 'transparent', fontSize: '1.2rem', cursor: 'pointer', color: 'var(--muted)' },
+      'aria-label': '关闭',
+      onclick: function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+    }, '✕'));
+    sheet.appendChild(head);
+    var list = el('div', { style: { color: 'var(--muted)', fontSize: '0.9rem' } }, '加载中…');
+    sheet.appendChild(list);
+    overlay.appendChild(sheet);
+    document.body.appendChild(overlay);
+    getNotifications().then(function(items) {
+      list.innerHTML = '';
+      if (!items || !items.length) { list.textContent = '暂无通知'; return; }
+      items.slice(0, 30).forEach(function(n) {
+        var row = el('div', {
+          style: { background: 'var(--bg2)', borderRadius: '10px', padding: '10px 12px', marginBottom: '8px' }
+        });
+        row.appendChild(el('div', { style: { fontSize: '0.9rem', color: 'var(--ink)' } }, n.message || n.title || '通知'));
+        if (n.created_at) {
+          row.appendChild(el('div', { style: { fontSize: '0.75rem', color: 'var(--muted)', marginTop: '2px' } },
+            new Date(n.created_at).toLocaleString('zh-CN')));
+        }
+        list.appendChild(row);
+      });
+    }).catch(function() { list.textContent = '加载失败，请稍后再试'; });
+  }
+
+  refreshLinks();
 
   // 首屏：健康分大数字（紧凑）
   var hero = el('div', {
@@ -418,13 +585,15 @@ export function renderFamilyMode(container, elderlyData) {
       if (!text) return;
       var elderlyId = data.elderlyId || '';
       if (!elderlyId) {
-        alert('请先绑定老人');
+        alert('请先在上方关联老人');
         return;
       }
+      var delivered = isConnected();
       var msg = sendWebSocketCare(elderlyId, text, null);
       wsSend(msg);
       careInput.value = '';
-      alert('已发送关怀');
+      // 断线时入队但尚未送达——不谎报"已发送"（此前是无条件 alert 成功）
+      alert(delivered ? '已发送给老人' : '网络断了，这条会先存着，等连上再发');
     }
   }, '发送文字'));
   careBtnRow.appendChild(el('button', {
