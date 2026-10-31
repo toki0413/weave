@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     # 审计日志
     audit_log_enabled: bool = True
 
+    # 漏录日课提醒（W3 方案 A：进程内日任务 + Redis 锁去重）
+    missed_checkin_enabled: bool = True
+    missed_checkin_hour: int = 20                    # 北京时间几点扫
+    missed_checkin_threshold_days: int = 2           # 连续几天没记录才提醒
+
     model_config = SettingsConfigDict(env_file=".env")
 
 @lru_cache()

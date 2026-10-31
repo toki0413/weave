@@ -723,6 +723,30 @@ function renderLeftPanel() {
           import('../decline.js').then(function(mod) { mod.openDeclinePanel(); });
         }
       }, '🧠 查看本周脑健康小结'),
+      // W2：家属代维护老人的热词（词条落老人名下，否则对转写无效）
+      el('button', {
+        className: 'cg-btn',
+        style: { width: '100%', marginTop: '8px' },
+        onclick: function() {
+          import('../../api/client.js').then(function(api) {
+            return api.getFamilyMembers();
+          }).then(function(list) {
+            if (!list || !list.length) {
+              alert('请先关联老人，再帮 TA 维护常用的名字和地点。');
+              return;
+            }
+            var e = list[0];
+            return import('../lexicon-manager.js').then(function(mod) {
+              mod.openLexiconPanel({
+                elderlyId: e.elderly_user_id,
+                label: e.elderly_name ? ('「' + e.elderly_name + '」') : '',
+              });
+            });
+          }).catch(function(err) {
+            alert((err && err.message) || '打开失败，请稍后再试');
+          });
+        }
+      }, '📛 帮爸妈记下常用名字'),
     ]));
     return panel;
   }

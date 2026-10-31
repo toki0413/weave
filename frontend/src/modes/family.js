@@ -115,11 +115,28 @@ export function renderFamilyMode(container, elderlyData) {
     linksWrap.innerHTML = '';
     var cur = currentElderly();
     data.elderlyId = cur ? cur.elderly_user_id : '';
+    if (typeof refreshTierCard === 'function') refreshTierCard();   // 切换对象时卡跟着换
     if (!_links.length) {
       linksWrap.appendChild(buildBindCard());
       return;
     }
     if (_links.length > 1) linksWrap.appendChild(buildElderlySwitcher());
+
+    // W2：家属代维护老人的热词（词条必须落在老人 user_id 下才对转写有效）
+    linksWrap.appendChild(el('button', {
+      className: 'btn-secondary',
+      style: { padding: '6px 12px', fontSize: '0.85rem', marginBottom: '8px' },
+      onclick: function() {
+        var c = currentElderly();
+        if (!c) return;
+        import('../ui/lexicon-manager.js').then(function(mod) {
+          mod.openLexiconPanel({
+            elderlyId: c.elderly_user_id,
+            label: c.elderly_name ? ('「' + c.elderly_name + '」') : '',
+          });
+        }).catch(function() {});
+      }
+    }, '📛 记下 TA 常用的名字和地点'));
 
     var name = (cur && cur.elderly_name) || '老人';
     var line = null;
@@ -280,14 +297,20 @@ export function renderFamilyMode(container, elderlyData) {
   // 任意形态都有入口，旧版只有完整模式医生分支里藏着按钮）
   var tierSlot = el('div', { style: { flexShrink: '0' } });
   app.appendChild(tierSlot);
-  Promise.all([
-    import('../api/client.js'),
-    import('../ui/decline.js'),
-  ]).then(function(mods) {
-    mods[0].getDeclineAnalysis(7).then(function(a) {
-      mods[1].renderTierInto(tierSlot, a);
+
+  function refreshTierCard() {
+    Promise.all([
+      import('../api/client.js'),
+      import('../ui/decline.js'),
+    ]).then(function(mods) {
+      // 显式带上当前选中老人：多老人切换时卡跟着换，不再读家属自己的空数据
+      var eid = data.elderlyId || null;
+      mods[0].getDeclineAnalysis(7, eid).then(function(a) {
+        mods[1].renderTierInto(tierSlot, a);
+      }).catch(function() {});
     }).catch(function() {});
-  }).catch(function() {});
+  }
+  refreshTierCard();
 
   // 今日异常提醒（紧凑）
   if (anomalies.length > 0) {

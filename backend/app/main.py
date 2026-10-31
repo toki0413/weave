@@ -151,6 +151,14 @@ app = FastAPI(
     redoc_url="/redoc" if settings.debug else None,
 )
 
+# 漏录日课提醒：进程内日任务（单机试点够用，不引 APScheduler/Celery）。
+# 多 worker 由 Redis SETNX 锁去重，Redis 不可用时退化到进程内日期标记；
+# 关掉开关（missed_checkin_enabled=false）即可完全停用。
+@app.on_event("startup")
+async def _start_missed_checkin_job():
+    from app.services.missed_checkin_job import start_daily_job
+    start_daily_job()
+
 # 请求/响应日志中间件
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

@@ -1,6 +1,7 @@
 // ============ 自定义词典管理 UI ============
 // 弹窗：按类型分组展示词条，支持增删、批量导入、搜索过滤
 import { el } from './components.js';
+import { parseImportText } from './lexicon-import.js';   // 纯函数：中文类型别名 + 不静默降级
 import {
   getLexicon,
   addLexiconWord,
@@ -30,8 +31,14 @@ var session = {
   _restoreFocus: null,
 };
 
-// 打开词典管理弹窗
-export function openLexiconPanel() {
+// 代维护目标（W2）：家属/医生打开时带 elderlyId，词条落在老人名下——
+// 只有老人 user_id 下的词条才会在老人上传时被后端取去进转写 context。
+var _target = { elderlyId: null, label: null };
+
+// 打开词典管理弹窗；opts = { elderlyId, label }
+export function openLexiconPanel(opts) {
+  _target.elderlyId = (opts && opts.elderlyId) || null;
+  _target.label = (opts && opts.label) || null;
   closeLexiconPanel();
   session._savedFocus = document.activeElement;
   var overlay = el('div', {
@@ -67,7 +74,7 @@ export function closeLexiconPanel() {
 // 拉取词条
 function loadWords() {
   session.loading = true;
-  getLexicon()
+  getLexicon(undefined, _target.elderlyId)
     .then(function(rows) {
       session.loading = false;
       session.words = rows || [];
@@ -113,7 +120,10 @@ function paintLoading(text) {
 function buildShell() {
   var container = el('div', { className: 'lexicon-modal' });
   var header = el('div', { className: 'lexicon-modal-header' }, [
-    el('h2', { className: 'lexicon-modal-title' }, '我的词典'),
+    el('h2', { className: 'lexicon-modal-title' },
+      _target.elderlyId
+        ? ('帮' + (_target.label || '老人') + '记下的名字和地点')
+        : '我的词典'),
     el('button', {
       className: 'lexicon-close-btn',
       'aria-label': '关闭',
@@ -163,7 +173,7 @@ function renderAddForm() {
       var wordType = typeSelect.value;
       addBtn.disabled = true;
       addBtn.textContent = '添加中…';
-      addLexiconWord(word, wordType)
+      addLexiconWord(word, wordType, _target.elderlyId)
         .then(function() {
           input.value = '';
           addBtn.disabled = false;
@@ -320,7 +330,7 @@ function renderChip(w) {
       e.stopPropagation();
       if (!confirm('删除词条「' + w.word + '」？')) return;
       delBtn.disabled = true;
-      deleteLexiconWord(w.id)
+      deleteLexiconWord(w.id, _target.elderlyId)
         .then(function() {
           // 本地移除
           session.words = session.words.filter(function(x) { return x !== w; });
@@ -341,11 +351,11 @@ function renderImportArea() {
   var wrap = el('div', { className: 'lexicon-import-area' });
   wrap.appendChild(el('div', { className: 'lexicon-section-title' }, '批量导入'));
   wrap.appendChild(el('div', { className: 'lexicon-import-hint' },
-    '每行一个，格式：词,类型（类型可选：person / place / event / item），如：小明,person'));
+    '每行一个，格式：词,类型（类型写中文即可：人名 / 地点 / 事件 / 物品），如：小明,人名'));
 
   var ta = el('textarea', {
     className: 'lexicon-textarea',
-    placeholder: '小明,person\n社区医院,place\n跳广场舞,event\n老花镜,item',
+    placeholder: '小明,人名\n社区医院,地点\n跳广场舞,事件\n老花镜,物品',
     rows: '5',
     id: 'lexicon-import-ta',
   });
@@ -369,7 +379,7 @@ function renderImportArea() {
       }
       importBtn.disabled = true;
       importBtn.textContent = '导入中…';
-      importLexicon(items)
+      importLexicon(items, _target.elderlyId)
         .then(function(created) {
           importBtn.disabled = false;
           importBtn.textContent = '导入';
@@ -383,7 +393,16 @@ function renderImportArea() {
             });
           });
           ta.value = '';
-          showImportMsg('成功导入 ' + (created ? created.length : 0) + ' 条', 'ok');
+          // 类型无法识别的行如实报出，不再静默按 item 入库（错类型会持续影响
+          // 图谱实体识别，事后很难发现来源）
+          var skipped = (items && items.bad && items.bad.length)
+            ? ('；' + items.bad.length + ' 行类型未识别，未导入（可写 人名/地点/事件/物品）')
+            : '';
+          showImportMsg('成功导入 ' + (created ? created.length : 0) + ' 条' + skipped,
+            skipped ? 'error' : 'ok');
+          if (skipped) {
+            ta.value = items.bad.join('\n');      // 把没导入的行留在框里便于改正
+          }
           refreshListOnly();
         })
         .catch(function(err) {
@@ -400,25 +419,6 @@ function renderImportArea() {
 }
 
 // 解析批量导入文本
-function parseImportText(text) {
-  var lines = text.split(/\r?\n/);
-  var validTypes = { person: 1, place: 1, event: 1, item: 1 };
-  var items = [];
-  lines.forEach(function(line) {
-    var s = line.trim();
-    if (!s) return;
-    var parts = s.split(/[,，]/).map(function(x) { return x.trim(); });
-    if (parts.length === 0) return;
-    var word = parts[0];
-    if (!word) return;
-    // 没填类型默认 item
-    var wordType = parts[1] ? parts[1].toLowerCase() : 'item';
-    if (!validTypes[wordType]) wordType = 'item';
-    items.push({ word: word, word_type: wordType });
-  });
-  return items;
-}
-
 function showImportMsg(text, type) {
   var box = document.getElementById('lexicon-import-msg');
   if (!box) return;

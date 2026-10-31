@@ -84,6 +84,12 @@ async function tryRefresh() {
 const apiCache = {};
 
 export function invalidateCache(path) {
+  if (path && path.endsWith('*')) {
+    // 前缀失效：写操作后要清掉带 query 的读缓存（如 /lexicon/?elderly_id=xxx）
+    const prefix = path.slice(0, -1);
+    Object.keys(apiCache).forEach(function(k) { if (k.indexOf(prefix) !== -1) delete apiCache[k]; });
+    return;
+  }
   if (path) {
     delete apiCache[path];
   } else {
@@ -596,30 +602,45 @@ export async function getScaleHistory(scaleType) {
 }
 
 // ========== 自定义词典 ==========
-export async function getLexicon(wordType) {
-  const query = wordType ? `?word_type=${wordType}` : '';
+// 词典代维护（W2）：家属/医生传 elderlyId 时词条落在老人名下——只有老人的
+// user_id 下的词条才会在老人上传录音时被 stt.py 取去进百炼 context。
+export async function getLexicon(wordType, elderlyId = null) {
+  const parts = [];
+  if (wordType) parts.push(`word_type=${encodeURIComponent(wordType)}`);
+  if (elderlyId) parts.push(`elderly_id=${encodeURIComponent(elderlyId)}`);
+  const query = parts.length ? `?${parts.join('&')}` : '';
   return apiFetch(`/lexicon/${query}`, { cache: true });
 }
 
-export async function addLexiconWord(word, word_type) {
-  return apiFetch('/lexicon/', { method: 'POST', body: { word, word_type } });
+export async function addLexiconWord(word, word_type, elderlyId = null) {
+  const q = elderlyId ? `?elderly_id=${encodeURIComponent(elderlyId)}` : '';
+  return apiFetch(`/lexicon/${q}`, { method: 'POST', body: { word, word_type } })
+    .then(function(r) { invalidateCache('/lexicon*'); return r; });
 }
 
-export async function deleteLexiconWord(word_id) {
-  return apiFetch(`/lexicon/${word_id}`, { method: 'DELETE' });
+export async function deleteLexiconWord(word_id, elderlyId = null) {
+  const q = elderlyId ? `?elderly_id=${encodeURIComponent(elderlyId)}` : '';
+  return apiFetch(`/lexicon/${word_id}${q}`, { method: 'DELETE' })
+    .then(function(r) { invalidateCache('/lexicon*'); return r; });
 }
 
-export async function importLexicon(items) {
-  return apiFetch('/lexicon/import', { method: 'POST', body: { items } });
+export async function importLexicon(items, elderlyId = null) {
+  const q = elderlyId ? `?elderly_id=${encodeURIComponent(elderlyId)}` : '';
+  return apiFetch(`/lexicon/import${q}`, { method: 'POST', body: { items } })
+    .then(function(r) { invalidateCache('/lexicon*'); return r; });
 }
 
 // ========== 记忆衰退分析 ==========
-export async function getDeclineAnalysis(windowDays = 7) {
-  return apiFetch(`/decline/analysis?window_days=${windowDays}`, { cache: true });
+// elderlyId：家属/医生指定分析对象；不传由后端按角色默认首个绑定对象。
+// 缓存键含 query，多老人切换不会串数据。
+export async function getDeclineAnalysis(windowDays = 7, elderlyId = null) {
+  const q = elderlyId ? `&elderly_id=${encodeURIComponent(elderlyId)}` : '';
+  return apiFetch(`/decline/analysis?window_days=${windowDays}${q}`, { cache: true });
 }
 
-export async function getDeclineTimeline(days = 30) {
-  return apiFetch(`/decline/timeline?days=${days}`, { cache: true });
+export async function getDeclineTimeline(days = 30, elderlyId = null) {
+  const q = elderlyId ? `&elderly_id=${encodeURIComponent(elderlyId)}` : '';
+  return apiFetch(`/decline/timeline?days=${days}${q}`, { cache: true });
 }
 
 // ========== LLM 接口 ==========

@@ -16,6 +16,7 @@ var TYPE_ICON = {
   anomaly: '⚠️',
   decline: '📉',
   scale_reminder: '📋',
+  missed_checkin: '🗓️',   // 漏录日课（W3）；未知类型仍兜底 🔔
 };
 
 // severity 对应的颜色类名
