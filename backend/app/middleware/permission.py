@@ -108,3 +108,33 @@ def require_permission(user_id: str, current_user: User, db: Session):
             return
 
     raise HTTPException(status_code=403, detail="无权访问该用户数据")
+
+
+def resolve_target_user(db: Session, current_user: User, target_id=None) -> str:
+    """解析"这次操作的是谁的数据"，返回 user_id。W0（decline 分析）与
+    W2（家属代维护老人词典）共用，避免两处各写一份规则而漂移。
+
+    规则：
+    - 显式传 target_id → require_permission 校验（不认的一律 403）。
+      修复前若干接口是"传了 id 也忽略、悄悄返回自己的"，家属端 tier 卡
+      因此永远显示"记录还不够"
+    - 家属 / 医生未传 → 默认自己的首个绑定对象（多对象由调用方显式传 id）；
+      一个都没有 → 404 明说，而不是静默给一份空分析
+    - 老人本人 / 其他角色未传 → 自己，向后兼容既有调用方
+    """
+    if target_id:
+        require_permission(target_id, current_user, db)
+        return target_id
+
+    role = (current_user.role or "")
+    if role == "family":
+        ids = get_linked_elderly_ids(current_user.id, db)
+        if not ids:
+            raise HTTPException(status_code=404, detail="尚未绑定老人")
+        return ids[0]
+    if role == "doctor":
+        ids = get_authorized_patient_ids(current_user.id, db)
+        if not ids:
+            raise HTTPException(status_code=404, detail="尚未关联患者")
+        return ids[0]
+    return current_user.id

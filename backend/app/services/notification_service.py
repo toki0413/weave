@@ -8,11 +8,16 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models import Notification, FamilyLink, ScaleRecord
+from app.models import Session as DBSession        # 会话表（本文件 Session 已被 ORM Session 占用）
 
 logger = logging.getLogger("cognitive_garden")
 
 # 量表到期提醒周期：每季度一次
 _SCALE_REMINDER_INTERVAL_DAYS = 90
+
+# 漏录判定按北京日历日切天，与 /notification/family-members 的 missing_days
+# 及 pilot_export / weekly_baseline 的周桶同源（同一套偏移，避免 0–8 点歧义）
+_LOCAL_TZ_OFFSET_MIN = 480
 
 # ---- 告警频控与动作化（2026-10，DeCaAI 阴性结果教训：告警疲劳即弃用）----
 # 同一信号 key 的冷却期（天）与家属端每日告警上限
@@ -23,6 +28,10 @@ _FALSE_ALARM_COOLDOWN_DAYS = 30
 
 # 每类信号对应的家属可执行动作（每条告警必须附带"下一步做什么"）
 _SIGNAL_ACTIONS: Dict[str, List[str]] = {
+    "missed_checkin": [
+        "打个电话或发条语音，问问今天做了什么——不用催 TA 打开应用",
+        "若连续多日无记录，留意听力、情绪或操作是否遇到了困难",
+    ],
     "entity_forgotten": [
         "翻看与 TA 相关的老照片或视频，温和地聊起这个人，不要考问",
         "下次复诊时把「最近较少提到 TA」告诉医生",
@@ -71,7 +80,10 @@ def _should_throttle(
 
     返回 True 表示应跳过本次发送。
     """
-    if type_ not in ("anomaly", "decline", "emotion_alert"):
+    # missed_checkin 必须在此列表内：它的"同一天只发一条"靠的就是下面的
+    # signal_key 冷却（key 里带北京日期）。此前该类型不在受控集合里，
+    # 同一天重复执行任务会重复写通知。
+    if type_ not in ("anomaly", "decline", "emotion_alert", "missed_checkin"):
         return False
 
     now = datetime.now(timezone.utc)
@@ -120,6 +132,53 @@ def _should_throttle(
 def _get_family_members_of(db: Session, elderly_user_id: str) -> List[FamilyLink]:
     """查出绑定这位老人的所有家属"""
     return db.query(FamilyLink).filter(FamilyLink.elderly_user_id == elderly_user_id).all()
+
+
+def _beijing_date(dt):
+    """UTC → 北京日历日（与 family-members 的 missing_days、周桶同源）"""
+    if dt is None:
+        return None
+    return (_ensure_utc(dt) + timedelta(minutes=_LOCAL_TZ_OFFSET_MIN)).date()
+
+
+def compute_missing_days(db: Session, elderly_user_id: str, today=None):
+    """老人距今几天没有新会话；从未记录返回 None（未知，不当成"漏了很多天"）"""
+    last = (
+        db.query(DBSession.created_at)
+        .filter(DBSession.user_id == elderly_user_id)
+        .order_by(DBSession.created_at.desc())
+        .first()
+    )
+    if last is None or last[0] is None:
+        return None
+    today = today or datetime.now(timezone.utc)
+    return max(0, (_beijing_date(today) - _beijing_date(last[0])).days)
+
+
+def create_missed_checkin_notifications(db: Session, threshold_days: int = 2) -> int:
+    """漏录日课提醒：连续 threshold_days 天没有新会话时提醒已绑定家属。
+
+    幂等靠 signal_key 里的北京日期——同一天重复执行只有一条；且复用
+    `_create_for_family` 的既有频控（冷却期 + 每日上限），不做骚扰式召回。
+    从未记录的老人不推送（缺的是首次引导，不是催办）。
+    """
+    rows = db.query(FamilyLink.elderly_user_id).filter(
+        FamilyLink.is_active == True).distinct().all()      # noqa: E712
+    written = 0
+    today_bj = _beijing_date(datetime.now(timezone.utc))
+    for (elderly_id,) in rows:
+        missing = compute_missing_days(db, elderly_id)
+        if missing is None or missing < threshold_days:
+            continue
+        written += _create_for_family(
+            db, elderly_id, "missed_checkin",
+            title="今天还没有新的回忆",
+            content=f"已经 {missing} 天没有听到 TA 的记录，找个安静的时间陪 TA 说说今天的事。",
+            severity="warning",
+            related_data={"missing_days": missing, "threshold_days": threshold_days},
+            signal_key=f"missed_checkin|{today_bj}",
+        )
+    return written
 
 
 def _severity_from_anomalies(anomalies: List[Dict[str, Any]]) -> str:
