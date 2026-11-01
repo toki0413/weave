@@ -181,9 +181,12 @@ def test_family_members_missing_days_computed(client, db_session):
     assert r.status_code == 200, r.text
     sid = r.json()["id"]
 
-    # 无时区歧义：把会话回拨到 3 天前的正午（+480 后仍是同一天）
-    target = datetime.now(timezone.utc) - timedelta(days=3)
-    target = target.replace(hour=4, minute=0, second=0)  # 12:00 北京时间
+    # 按北京日历日回拨 3 天：missing_days 的语义是"北京日历日差"，测试基准必须同源。
+    # 取北京"今天"减 3 天的 12:00（= UTC 04:00），任意时刻运行都是恒等式 missing_days=3。
+    # 旧写法 now(utc) - 3d 在 UTC 16:00-24:00（北京 0:00-8:00）会把北京日多算一天（bug：实得 4）。
+    now_utc = datetime.now(timezone.utc)
+    target_bj_date = (now_utc + timedelta(minutes=480)).date() - timedelta(days=3)
+    target = datetime(target_bj_date.year, target_bj_date.month, target_bj_date.day, 4, 0)
     row = db_session.get(DBSession, sid)
     row.created_at = target
     db_session.commit()
