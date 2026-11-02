@@ -159,6 +159,12 @@ async def _start_missed_checkin_job():
     from app.services.missed_checkin_job import start_daily_job
     start_daily_job()
 
+# 家属周摘要周任务（G5）：同一调度骨架，每周一上午（北京）；Redis 周锁去重
+@app.on_event("startup")
+async def _start_weekly_digest_job():
+    from app.services.weekly_digest_job import start_weekly_job
+    start_weekly_job()
+
 # 请求/响应日志中间件
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

@@ -26,9 +26,22 @@ from app.database import get_db
 from app.models import CustomLexicon, User
 from app.routers.auth import get_current_user
 from app.services.asr_providers import resolve_chain
+from prometheus_client import Counter
 
 logger = logging.getLogger("cognitive_garden")
 router = APIRouter(prefix="/stt", tags=["Speech-to-Text"])
+
+# STT 结果计数（gap S1）：失败率是"老人主路径受影响"的核心告警输入
+STT_REQUESTS = Counter(
+    "stt_requests_total",
+    "语音识别尝试结果（按 provider 与结果）",
+    ["provider", "result"],
+)
+
+
+def record_stt_result(provider_name: str, ok: bool) -> None:
+    """记录一次 provider 级 STT 结果。单独抽函数为了可测。"""
+    STT_REQUESTS.labels(provider=provider_name, result="ok" if ok else "fail").inc()
 
 
 def _convert_to_wav(input_path: str, output_path: str) -> bool:
@@ -184,6 +197,7 @@ async def transcribe_audio(
             try:
                 result = provider.transcribe(wav_path, context_words, "zh")
                 if result.ok:
+                    record_stt_result(result.provider, True)
                     audio_metrics = _extract_audio_features(wav_path, result.text)
                     audio_metrics["lexicon_hit_rate"] = _lexicon_hit_rate(
                         result.text, context_words)
@@ -193,9 +207,11 @@ async def transcribe_audio(
                         "source": result.provider,
                         "audio_metrics": audio_metrics,
                     }
+                record_stt_result(provider.name, False)
                 last_error = result.error or "空结果"
                 logger.info("ASR %s 未产出: %s", provider.name, last_error)
             except Exception as e:
+                record_stt_result(provider.name, False)
                 last_error = str(e)
                 logger.error("ASR %s 异常: %s", provider.name, e, exc_info=True)
 

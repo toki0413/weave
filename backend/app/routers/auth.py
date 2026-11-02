@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import Optional
+from pathlib import Path
 import bcrypt
 import secrets
 import uuid
@@ -603,3 +604,116 @@ def update_notify_email(
     current_user.notify_email = email
     db.commit()
     return {"status": "ok", "notify_email": email}
+
+
+# ========== 账号注销（个保法第 47 条，gap G4）==========
+class AccountDeletionPayload(BaseModel):
+    password: str = Field(..., min_length=1)
+
+
+@router.delete("/account", dependencies=[rate_limit(2, 3600)])
+def delete_account(
+    payload: AccountDeletionPayload,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """注销当前账号：密码确认后级联删除本人全部数据。
+
+    处置口径：
+    - 业务数据（会话/基线/图谱状态/量表/词典/训练/设备同步/通知/
+      refresh token/恢复请求/绑定关系/分享/记忆卡片）物理删除
+    - 分析事件匿名化：user_id 置空，漏斗聚合读数保留（零方数据是
+      试点证据资产，匿名后不构成个人信息）
+    - 审计日志去关联化：actor/target 置空但行保留（合规要求保留
+      操作轨迹）；注销事件本身记一条无标识审计日志
+    - 语音留言行随双方任一注销删除；音频文件只在本人是发送方时删除
+      （接收方的文件是对方的语音，保留）
+    """
+    from sqlalchemy import delete as sa_delete
+    from app.models import (
+        Session as SessionModel, Baseline, UserState, ScaleRecord,
+        CustomLexicon, FamilyLink, DoctorPatient, DeviceSync, Notification,
+        VoiceMessage, ShareRecord, RecoveryRequest, TrainingRecord,
+        AnalyticsEvent, AuditLog, MemoryCardShare,
+    )
+
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=403, detail="密码不正确，账号未注销")
+
+    uid = current_user.id
+
+    # 本人发送的语音留言：先取文件路径再删行
+    sent_voices = (
+        db.query(VoiceMessage).filter(VoiceMessage.sender_id == uid).all()
+    )
+    uploads_dir = Path(__file__).resolve().parents[1] / "uploads"
+
+    # 级联物理删除（顺序不敏感：SQLite/PG 外键在事务内均按语句顺序处理，
+    # 先删子表再删 users 一律安全）
+    db.query(Baseline).filter(Baseline.user_id == uid).delete(synchronize_session=False)
+    db.query(ShareRecord).filter(
+        (ShareRecord.elderly_id == uid) | (ShareRecord.family_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(SessionModel).filter(SessionModel.user_id == uid).delete(synchronize_session=False)
+    db.query(UserState).filter(UserState.user_id == uid).delete(synchronize_session=False)
+    db.query(ScaleRecord).filter(ScaleRecord.user_id == uid).delete(synchronize_session=False)
+    db.query(CustomLexicon).filter(CustomLexicon.user_id == uid).delete(synchronize_session=False)
+    db.query(TrainingRecord).filter(TrainingRecord.user_id == uid).delete(synchronize_session=False)
+    db.query(DeviceSync).filter(DeviceSync.user_id == uid).delete(synchronize_session=False)
+    db.query(Notification).filter(Notification.user_id == uid).delete(synchronize_session=False)
+    db.query(RefreshToken).filter(RefreshToken.user_id == uid).delete(synchronize_session=False)
+    db.query(RecoveryRequest).filter(RecoveryRequest.user_id == uid).delete(synchronize_session=False)
+    db.query(VoiceMessage).filter(
+        (VoiceMessage.sender_id == uid) | (VoiceMessage.receiver_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(FamilyLink).filter(
+        (FamilyLink.elderly_user_id == uid) | (FamilyLink.family_user_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(DoctorPatient).filter(
+        (DoctorPatient.doctor_id == uid) | (DoctorPatient.patient_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(MemoryCardShare).filter(
+        (MemoryCardShare.family_user_id == uid) | (MemoryCardShare.elderly_user_id == uid)
+    ).delete(synchronize_session=False)
+
+    # 匿名化 / 去关联化
+    db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == uid).update(
+        {AnalyticsEvent.user_id: None}, synchronize_session=False)
+    db.query(AuditLog).filter(
+        (AuditLog.actor_id == uid) | (AuditLog.target_user_id == uid)
+    ).update({
+        AuditLog.actor_id: None,
+        AuditLog.target_user_id: None,
+    }, synchronize_session=False)
+
+    # 注销事件本身：无标识审计日志（append 一次，随同一事务提交）
+    db.add(AuditLog(action="account_deleted", resource_type="user",
+                    actor_role=(current_user.role or ""), status_code=200))
+
+    # 清进程内密钥缓存 + 吊销当前 access token（尽力而为）
+    key_manager.clear_user_key(uid)
+    try:
+        jti = _extract_jti(request)
+        if jti:
+            blacklist_token(jti)
+    except Exception:
+        pass
+
+    db.execute(sa_delete(User).where(User.id == uid))
+    db.commit()
+
+    # 音频文件在事务提交后删（文件系统无事务，删除失败只留孤儿文件，无合规风险——
+    # 这些是本人自己的语音）
+    removed = 0
+    for v in sent_voices:
+        name = (v.audio_url or "").rsplit("/", 1)[-1]
+        if not name:
+            continue
+        try:
+            (uploads_dir / name).unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            pass
+
+    return {"status": "ok", "audio_files_removed": removed}

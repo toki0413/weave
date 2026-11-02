@@ -425,6 +425,16 @@ export async function logout() {
 }
 export function isLoggedIn() { return !!getToken(); }
 
+export async function deleteAccount(password) {
+  // 账号注销（个保法 47 条）：后端级联删除，成功后清除本地凭据
+  const res = await apiFetch('/auth/account', {
+    method: 'DELETE',
+    body: { password },
+  });
+  clearToken();
+  return res;
+}
+
 export async function createSession(dayNumber, text, dialect = 'mandarin', audioMetrics = null, asr = null) {
   const body = { day_number: dayNumber, narrative_input: { text, dialect } };
   if (audioMetrics) body.audio_metrics = audioMetrics;

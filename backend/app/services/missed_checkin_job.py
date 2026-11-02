@@ -11,11 +11,19 @@ Redis 不可用时退化为进程内去重（限流模块同样有这个降级�
 """
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
+from prometheus_client import Gauge
 
 logger = logging.getLogger("cognitive_garden")
+
+# 成功执行时间戳（gap S1）：告警规则 MissedCheckinJobStale 以此判定调度是否挂了
+MISSED_CHECKIN_LAST_SUCCESS = Gauge(
+    "missed_checkin_last_success_timestamp",
+    "漏录提醒任务最近一次成功执行的 Unix 时间戳",
+)
 
 LOCAL_TZ_OFFSET = timedelta(minutes=480)          # 北京
 CHECK_INTERVAL_SEC = 300                          # 每 5 分钟看一次是否到点
@@ -64,6 +72,7 @@ def run_once():
         n = create_missed_checkin_notifications(db, threshold_days=settings.missed_checkin_threshold_days)
         if n:
             logger.info("漏录提醒：写入 %d 条", n)
+        MISSED_CHECKIN_LAST_SUCCESS.set(time.time())
         return n
     except Exception as e:
         logger.error("漏录提醒任务失败: %s", e, exc_info=True)
