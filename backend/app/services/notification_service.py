@@ -228,6 +228,7 @@ def _create_for_family(
         content = content + "\n建议：" + "；".join(actions[:2])
 
     written = 0
+    delivered_ids: List[str] = []
     for link in links:
         if signal_key and _should_throttle(db, link.family_user_id, type_, signal_key):
             continue
@@ -241,9 +242,19 @@ def _create_for_family(
             is_read=False,
         )
         db.add(n)
+        delivered_ids.append(link.family_user_id)
         written += 1
     if written:
         db.commit()
+        # 应用外触达（G1）：warning 及以上走邮件/webhook。频控命中的家属
+        # 不出站——邮件不能绕过应用内的告警疲劳防线。通道失败只记日志
+        # 与计数，绝不影响已提交的应用内通知。
+        if type_ in ("anomaly", "decline", "emotion_alert", "missed_checkin"):
+            try:
+                from app.services.alert_channels import dispatch_alert
+                dispatch_alert(db, delivered_ids, title, content, severity)
+            except Exception:
+                logger.warning("出站告警派发异常（不影响应用内通知）", exc_info=True)
     return written
 
 

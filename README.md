@@ -209,6 +209,16 @@ npx playwright test
 | `CG_PORT` | 后端端口 | 8004 |
 | `CG_AUTO_MIGRATE` | 自动迁移 | 1 |
 | `CG_DEBUG` | 调试模式 | 0 |
+| `ALERT_OUTBOUND_MIN_SEVERITY` | 出站告警门槛（info/warning/danger） | warning |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_SSL` | 告警邮件通道（G1），留空关闭 | 空 |
+| `ALERT_WEBHOOK_URL` | 企业微信群机器人 webhook（告警值守群，G1） | 空 |
+
+### 密钥备份（必做）
+file KMS 的 wrap key 与数据同机存放，密钥丢失 = 全部加密内容永久不可解。
+首次部署后立即以管理员身份 `GET /api/v1/backup/kms-wrap-key` 导出备份，
+灾后用 `POST /api/v1/backup/kms-wrap-key` 恢复（校验 → 落盘 → 热替换，
+无需重启）；`GET /api/v1/backup/kms-status` 自检当前 provider 的恢复路径。
+env/aws provider 的密钥由对应密钥管理体系备份。
 
 ---
 
@@ -219,7 +229,7 @@ npx playwright test
 - 修改密码无需重加密所有历史数据
 - JWT 密钥持久化存储，文件权限限制为 `0o600`
 - 限流保护：敏感操作有速率限制
-- KMS 提供 file（单机默认）/ env / aws 三种 provider：file 模式密钥持久化到用户目录（0o600），重启后数据仍可解密
+- KMS 提供 file（单机默认）/ env / aws 三种 provider：file 模式密钥持久化到用户目录（0o600），重启后数据仍可解密；wrap key 支持导出备份与灾后恢复（见上方"密钥备份"）
 - 语音留言（v2，2026-10 重构）：每条消息独立随机内容密钥加密，各用户用**自己的**主密钥包装/解包自己的密钥副本。如实定性为**服务端中转加密**（服务端有能力恢复明文），不是端到端加密；升级路径为 X25519 ECDH 密钥协商（见 e2ee.py 模块文档）
 
 ---

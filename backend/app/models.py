@@ -27,6 +27,8 @@ class User(Base):
     recovery_master_key_encrypted = Column(Text)
     # 恢复码派生密钥用的 salt
     recovery_salt = Column(String(64))
+    # 告警出站触达邮箱（G1）：家属填了才会收到邮件告警；应用内通知不受影响
+    notify_email = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=_utc_now)
     
     sessions = relationship("Session", back_populates="user")
