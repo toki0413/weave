@@ -13,7 +13,7 @@ import { createVoiceEditor } from '../voice-editor.js';
 import { withLoading } from '../loading.js';
 import { showToast } from '../toast.js';
 import { trapFocus } from '../interactions.js';
-import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode, getDailyPrompt, trackEvent, markSessionSource } from '../../api/client.js';
+import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode, getDailyPrompt, trackEvent, markSessionSource, deleteAccount, logout } from '../../api/client.js';
 
 function getGraphApis() {
   return window.__graphApis || {
@@ -677,6 +677,30 @@ function renderExportSection(panel) {
         }, '查询中…');
       },
     }, '恢复码状态'));
+    backupGrid.appendChild(el('button', {
+      className: 'btn-secondary',
+      id: 'delete-account-btn',
+      style: { gridColumn: '1 / -1', color: '#c62828', borderColor: '#c62828' },
+      onclick: function() {
+        if (!confirm('注销账号将永久删除全部记忆数据、语音与账号信息，此操作不可撤销。确定继续吗？')) return;
+        if (!confirm('再次确认：真的要注销并删除所有数据吗？建议先「导出备份」留存。')) return;
+        var pwd = prompt('请输入登录密码以确认注销：');
+        if (pwd === null) return;
+        if (!pwd) { showToast('未输入密码，账号未注销', 'info'); return; }
+        var btn = document.getElementById('delete-account-btn');
+        withLoading(btn, function() {
+          return deleteAccount(pwd)
+            .then(function() {
+              showToast('账号已注销，全部数据已删除', 'success');
+              setTimeout(function() { location.reload(); }, 1200);
+            })
+            .catch(function(err) {
+              showToast('注销失败：' + (err && err.message ? err.message : '请重试'), 'error');
+              throw err;
+            });
+        }, '注销中…');
+      },
+    }, '注销账号'));
     backupSection.appendChild(backupGrid);
     backupSection.appendChild(importInput);
   } else {

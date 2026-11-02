@@ -25,6 +25,8 @@ _SIGNAL_COOLDOWN_DAYS = 3
 _DAILY_ALERT_CAP = 2
 # 被标记"误报"后的加长冷却期（闭环回填：误报信号自动降频）
 _FALSE_ALARM_COOLDOWN_DAYS = 30
+# 类型级冷却覆盖（不适用默认 3 天的信号）
+_TYPE_COOLDOWN_DAYS = {"weekly_digest": 6}   # 周摘要：同周重复跑只发一条
 
 # 每类信号对应的家属可执行动作（每条告警必须附带"下一步做什么"）
 _SIGNAL_ACTIONS: Dict[str, List[str]] = {
@@ -82,8 +84,9 @@ def _should_throttle(
     """
     # missed_checkin 必须在此列表内：它的"同一天只发一条"靠的就是下面的
     # signal_key 冷却（key 里带北京日期）。此前该类型不在受控集合里，
-    # 同一天重复执行任务会重复写通知。
-    if type_ not in ("anomaly", "decline", "emotion_alert", "missed_checkin"):
+    # 同一天重复执行任务会重复写通知。weekly_digest 在列保证同周幂等。
+    if type_ not in ("anomaly", "decline", "emotion_alert", "missed_checkin",
+                     "weekly_digest"):
         return False
 
     now = datetime.now(timezone.utc)
@@ -120,7 +123,7 @@ def _should_throttle(
         created = _ensure_utc(n.created_at)
         if not created:
             continue
-        cooldown = _SIGNAL_COOLDOWN_DAYS
+        cooldown = _TYPE_COOLDOWN_DAYS.get(type_, _SIGNAL_COOLDOWN_DAYS)
         if (n.resolution_status or "pending") == "false_alarm":
             # 闭环回填：家属标记误报的信号降频
             cooldown = _FALSE_ALARM_COOLDOWN_DAYS

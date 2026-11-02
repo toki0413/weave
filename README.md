@@ -220,6 +220,26 @@ file KMS 的 wrap key 与数据同机存放，密钥丢失 = 全部加密内容�
 无需重启）；`GET /api/v1/backup/kms-status` 自检当前 provider 的恢复路径。
 env/aws provider 的密钥由对应密钥管理体系备份。
 
+### 数据库备份与恢复（S2）
+`pg-backup` 服务随主栈启动：每 24h 一次 `pg_dump -Fc` 到 `cg_pg_backups`
+卷，滚动保留 14 天。恢复：
+
+```bash
+docker exec -i cg-pg-backup pg_restore -h postgres -U cg_user \
+  -d cognitive_garden --clean /backups/<文件名>.dump
+```
+
+备份卷与数据同机——异地容灾请另行把 `cg_pg_backups` 卷同步到对象存储。
+
+### 监控与告警（S1）
+`docker compose --profile with-monitoring up -d` 启动 Prometheus（:9090），
+规则见 `monitoring/alert_rules.yml`：5xx 率 >5%、ASR 失败率 >30%、
+漏录提醒 job 超 25h 未执行。
+
+### 账号注销（G4）
+登录用户在左侧「账户与安全」面板点「注销账号」，密码确认后级联删除
+全部业务数据；分析事件与审计日志匿名化/去关联化保留（合规要求）。
+
 ---
 
 ## 安全

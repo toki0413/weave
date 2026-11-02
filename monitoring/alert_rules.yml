@@ -1,0 +1,35 @@
+# 告警规则（gap S1）：试点期先上三条最要命的。
+# 用户是老人——报障能力最弱的人群，故障必须先于用户被发现。
+groups:
+  - name: weave-core
+    rules:
+      - alert: BackendHigh5xxRate
+        expr: >
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "后端 5xx 率超过 5%（持续 5 分钟）"
+          description: "连续 5 分钟错误响应占比超阈值，检查后端容器日志与数据库连接。"
+
+      - alert: STTFailureRateHigh
+        expr: >
+          sum(rate(stt_requests_total{result="fail"}[15m]))
+            / clamp_min(sum(rate(stt_requests_total[15m])), 1e-9) > 0.3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "语音识别失败率超过 30%（持续 15 分钟）"
+          description: "老人主输入路径受影响。检查 Vosk 模型加载与云端 ASR 密钥/额度。"
+
+      - alert: MissedCheckinJobStale
+        expr: time() - missed_checkin_last_success_timestamp > 90000
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "漏录提醒任务超过 25 小时未成功执行"
+          description: "日任务本应每天 20:00（北京）执行，超 25 小时说明调度挂了——漏录提醒静默失效，家属端告警链路断裂。"
