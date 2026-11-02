@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     missed_checkin_hour: int = 20                    # 北京时间几点扫
     missed_checkin_threshold_days: int = 2           # 连续几天没记录才提醒
 
+    # 告警出站触达（G1）：warning 及以上告警推到应用外。全部留空即关闭，
+    # 应用内通知不受影响。邮件按家属 notify_email 逐人发送；
+    # webhook 填企业微信群机器人地址（config-only 接入值守群）。
+    alert_outbound_min_severity: str = "warning"     # info 不出站
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""                              # 留空用 smtp_user
+    smtp_use_ssl: bool = True                        # 465 走 SSL；587 改 False + STARTTLS
+    alert_webhook_url: str = ""                      # 企业微信群机器人 webhook 地址
+
     model_config = SettingsConfigDict(env_file=".env")
 
 @lru_cache()

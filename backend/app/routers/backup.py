@@ -254,3 +254,61 @@ async def export_logs(current_user: User = Depends(get_current_user)):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ========== KMS 恢复路径（gap 审计 G3）==========
+# wrap key 丢失 = 全部 E2EE 内容永久不可解。密钥属于部署方而非终端用户，
+# 三个端点一律 admin-only：status 自检、export 备份、import 灾后恢复。
+
+class _KMSImportPayload(BaseModel):
+    key_b64: str
+
+
+def _require_admin(current_user: User) -> None:
+    if (current_user.role or "") != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可操作 KMS 密钥")
+
+
+@router.get("/kms-status", dependencies=[rate_limit(10, 60)])
+async def kms_status(current_user: User = Depends(get_current_user)):
+    """KMS 恢复路径自检：provider 类型、备份可导出性、待办提示"""
+    _require_admin(current_user)
+    from app.services import kms
+    return kms.describe_kms()
+
+
+@router.get("/kms-wrap-key", dependencies=[rate_limit(3, 300)])
+async def export_kms_key(current_user: User = Depends(get_current_user)):
+    """导出 wrap key（base64）供部署方离线备份。
+
+    非文件托管的 provider（env/aws）返回 409：密钥由外部体系管理，
+    从对应密钥管理体系备份，不走本接口。
+    """
+    _require_admin(current_user)
+    from app.services import kms
+    try:
+        key_b64 = kms.export_wrap_key()
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {
+        "provider": "file",
+        "key_b64": key_b64,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/kms-wrap-key", dependencies=[rate_limit(3, 300)])
+async def import_kms_key(
+    payload: _KMSImportPayload,
+    current_user: User = Depends(get_current_user),
+):
+    """从备份恢复 wrap key（灾后恢复）：校验 → 落盘 → 热替换，无需重启"""
+    _require_admin(current_user)
+    from app.services import kms
+    try:
+        kms.import_wrap_key(payload.key_b64)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "ok"}

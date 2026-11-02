@@ -127,11 +127,16 @@ class FileKMS(KMSProvider):
     与 local 的区别：重启后密钥仍在，已加密数据可继续解密——单机默认选项。
     与 env 的区别：无需手工配置环境变量；密钥与数据同机存放，防护等级
     等同于磁盘安全级别，多机/生产环境仍应使用 env 或 aws。
+
+    恢复路径（G3）：wrap key 与数据同机意味着磁盘故障/误删 = 全部 E2EE
+    内容永久不可解。export_wrap_key / import_wrap_key 提供密钥备份与
+    恢复；部署方应在首次启用后立即导出备份（配合 /backup/kms-wrap-key）。
     """
 
     def __init__(self):
-        key_file = Path.home() / ".cognitive-garden" / "kms_wrap_key.bin"
+        self.key_file = Path.home() / ".cognitive-garden" / "kms_wrap_key.bin"
         try:
+            key_file = self.key_file
             key_file.parent.mkdir(parents=True, exist_ok=True)
             if key_file.exists():
                 self._key = key_file.read_bytes()
@@ -158,6 +163,29 @@ class FileKMS(KMSProvider):
     def decrypt_data_key(self, encrypted_b64: str) -> bytes:
         plaintext_b64 = decrypt(encrypted_b64, self._key)
         return base64.b64decode(plaintext_b64)
+
+    def export_wrap_key(self) -> str:
+        return base64.b64encode(self._key).decode("ascii")
+
+    def import_wrap_key(self, key_b64: str) -> None:
+        """从备份恢复 wrap key：校验 → 落盘（0o600）→ 热替换进程内密钥"""
+        try:
+            raw = base64.b64decode(key_b64, validate=True)
+        except Exception as e:
+            raise ValueError(f"wrap key 不是合法的 base64：{e}")
+        if len(raw) != 32:
+            raise ValueError("wrap key 解码后必须为 32 字节")
+        try:
+            self.key_file.parent.mkdir(parents=True, exist_ok=True)
+            self.key_file.write_bytes(raw)
+            try:
+                os.chmod(self.key_file, 0o600)
+            except OSError:
+                pass
+        except OSError as e:
+            raise RuntimeError(f"wrap key 无法持久化：{e}")
+        self._key = raw
+        logger.warning("FileKMS wrap key 已从备份恢复到 %s", self.key_file)
 
 
 def init_kms() -> KMSProvider:
@@ -203,3 +231,47 @@ def generate_master_key_with_wrap() -> Tuple[bytes, str]:
     注册新用户时调用：KMS 生成新密钥，明文只在内存中短暂存在。
     """
     return get_kms().generate_data_key()
+
+
+# ============ 恢复路径（G3）============
+# wrap key 丢失 = 全部 E2EE 内容永久不可解。这三个函数是恢复路径的
+# 服务层入口；HTTP 出口在 routers/backup.py（admin-only + 限流）。
+
+def describe_kms() -> dict:
+    """当前 KMS provider 的恢复路径状态，供运维自检"""
+    p = get_kms()
+    info: dict = {"provider": type(p).__name__, "exportable": False, "key_file": None}
+    if isinstance(p, FileKMS):
+        info.update({
+            "exportable": True,
+            "key_file": str(p.key_file),
+            "key_file_exists": p.key_file.exists(),
+            "message": "wrap key 与数据同机存放，请立即通过 /backup/kms-wrap-key 导出备份",
+        })
+    elif isinstance(p, EnvKMS):
+        info["message"] = "主密钥由环境变量 CG_KMS_MASTER_KEY 托管，备份由部署密钥管理体系负责"
+    elif isinstance(p, AWSKMS):
+        info["message"] = "主密钥由 AWS KMS 托管，备份由 AWS 侧负责（KMS 密钥不可导出）"
+    else:  # LocalKMS
+        info["message"] = "local KMS 密钥仅存于进程内存，无恢复路径；请切换到 file/env/aws"
+    return info
+
+
+def export_wrap_key() -> str:
+    """导出 wrap key（base64）。仅 file provider 支持；其余 provider 的
+    密钥由外部体系托管，导出既无必要也无权限。"""
+    p = get_kms()
+    if not isinstance(p, FileKMS):
+        raise ValueError(
+            f"当前 KMS provider（{type(p).__name__}）不支持密钥导出：密钥由外部体系托管")
+    return p.export_wrap_key()
+
+
+def import_wrap_key(key_b64: str) -> None:
+    """从备份恢复 wrap key（base64）。恢复后立即热替换进程内密钥，
+    无需重启即可继续解包历史数据密钥。"""
+    p = get_kms()
+    if not isinstance(p, FileKMS):
+        raise ValueError(
+            f"当前 KMS provider（{type(p).__name__}）不支持密钥导入：密钥由外部体系托管")
+    p.import_wrap_key(key_b64)

@@ -267,6 +267,21 @@ def _rebuild_sessions_without(conn, drop_cols):
     return base_cols
 
 
+def _rebuild_users_without(conn, drop_cols):
+    """按快照列重建一个不含 drop_cols 的 users —— 造 0019 迁移前的存量形态。
+    users 是多张表的 FK 目标，PRAGMA foreign_keys=OFF 后换表不影响
+    引用它的表（SQLite 不在建表期校验引用）。"""
+    base_cols = [c for c in _cols(conn, "users") if c not in drop_cols]
+    assert base_cols, "users 没有可保留的列"
+    conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    conn.exec_driver_sql("DROP TABLE IF EXISTS users")
+    conn.exec_driver_sql(
+        "CREATE TABLE users ("
+        "  id VARCHAR(36) PRIMARY KEY,"
+        "  {})".format(", ".join(c + " TEXT" for c in base_cols if c != "id")))
+    return base_cols
+
+
 def test_real_alembic_upgrade_adds_0018_columns(tmp_path, monkeypatch):
     """真跑 upgrade：把现网 schema 快照到临时库、摘掉 0018 的四列，再让 alembic 补回来。
 
@@ -298,6 +313,9 @@ def test_real_alembic_upgrade_adds_0018_columns(tmp_path, monkeypatch):
         # 3) 造"停在 0017"：重建 sessions（无新列）+ 版本标记。
         #    曾戳 0016；远端 0017_memory_card_shares 并入后，provenance 的
         #    前一位是 0017，快照里那张表已存在，从 0016 起跑会重建撞车。
+        #    0019 的 notify_email 同理：快照按当前 models 建的，存量库没有，
+        #    不摘会在 0019 的 ADD COLUMN 撞 duplicate column。
+        _rebuild_users_without(conn, {"notify_email"})
         _rebuild_sessions_without(conn, NEW_COLS)
         conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS alembic_version "
                              "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
@@ -331,11 +349,12 @@ def test_real_alembic_upgrade_adds_0018_columns(tmp_path, monkeypatch):
     missing = NEW_COLS - cols_after
     assert not missing, f"upgrade head 后仍缺列 {missing} —— 0018 未被应用"
     assert indexes, "0018 的 (user_id, created_at) 索引没建上"
-    assert [v[0] for v in ver] == ["0018"], f"版本表未推进到 0018：{ver}"
+    # head 现在是 0019（notify_email），0018 在链上先于它应用
+    assert [v[0] for v in ver] == ["0019"], f"版本表未推进到 0019：{ver}"
 
 
-def test_alembic_head_is_0018():
-    """alembic 认到的 head 必须是 0018，否则新列在任何真实部署上都不会出现。"""
+def test_alembic_head_is_0019():
+    """alembic 认到的 head 必须是 0019，否则新列在任何真实部署上都不会出现。"""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -346,7 +365,7 @@ def test_alembic_head_is_0018():
 
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_current_head() == "0018"
+    assert ScriptDirectory.from_config(cfg).get_current_head() == "0019"
 
 
 def test_real_alembic_upgrade_from_0016_full_chain(tmp_path, monkeypatch):
@@ -376,7 +395,9 @@ def test_real_alembic_upgrade_from_0016_full_chain(tmp_path, monkeypatch):
         for _type, stmt in ddl:
             conn.exec_driver_sql(stmt)
         # 快照按当前 models 建的，sessions 已含四列；存量 0016 库没有，
-        # 须摘掉，否则 0018 的 ADD COLUMN 撞 duplicate column
+        # 须摘掉，否则 0018 的 ADD COLUMN 撞 duplicate column。
+        # users 的 notify_email（0019）同理。
+        _rebuild_users_without(conn, {"notify_email"})
         _rebuild_sessions_without(conn, NEW_COLS)
         conn.exec_driver_sql("CREATE TABLE IF NOT EXISTS alembic_version "
                              "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
@@ -396,6 +417,6 @@ def test_real_alembic_upgrade_from_0016_full_chain(tmp_path, monkeypatch):
         ).fetchone()
         assert has_card, "0017 未在存量库上重建 memory_card_shares"
         ver = conn.exec_driver_sql("SELECT version_num FROM alembic_version").fetchall()
-        assert [v[0] for v in ver] == ["0018"], f"版本表未推进到 0018：{ver}"
+        assert [v[0] for v in ver] == ["0019"], f"版本表未推进到 0019：{ver}"
     tmp_engine.dispose()
 

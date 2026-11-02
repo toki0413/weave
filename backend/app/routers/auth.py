@@ -581,3 +581,25 @@ def get_recovery_code(current_user: User = Depends(get_current_user)):
 @router.get("/me", response_model=UserOut)
 def read_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+class NotifyEmailPayload(BaseModel):
+    # None/空串 = 清除出站邮箱（退回仅应用内通知）
+    notify_email: Optional[str] = None
+
+
+@router.put("/me/notify-email", dependencies=[rate_limit(10, 60)])
+def update_notify_email(
+    payload: NotifyEmailPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """设置/清除告警出站邮箱（G1）：家属填了才会收到邮件告警"""
+    email = (payload.notify_email or "").strip() or None
+    if email:
+        import re
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            raise HTTPException(status_code=400, detail="邮箱格式不正确")
+    current_user.notify_email = email
+    db.commit()
+    return {"status": "ok", "notify_email": email}
