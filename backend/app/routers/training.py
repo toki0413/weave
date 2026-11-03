@@ -20,9 +20,17 @@ def get_daily_prompt_endpoint(
     """60 秒日课：当日语音引导话题（多模态契约，见 services/daily_prompt.py）
 
     极简适老化：voice 主通道 + text 大字 + haptic 起止；LLM 个性化可选。
+    冷启动（U1）：注册后前 7 天按种子序列定类别（家族人物 + 老物件优先），
+    日期口径统一为北京日期——老人对"第几天"的感知跟着本地日历走。
     """
+    from datetime import timedelta
     from app.services.daily_prompt import get_daily_prompt
-    return get_daily_prompt(current_user.id)
+
+    offset = timedelta(hours=8)
+    signup_bj = (current_user.created_at.replace(tzinfo=timezone.utc) + offset).date() \
+        if current_user.created_at else None
+    today_bj = (datetime.now(timezone.utc) + offset).date()
+    return get_daily_prompt(current_user.id, today_bj, signup_date=signup_bj)
 
 
 @router.post("/", response_model=TrainingRecordOut)

@@ -1,7 +1,10 @@
 // ============ 公开分享页：本周记忆卡片访客落地 ============
 // 免登录渲染；埋点 landing_viewed（匿名），注册引导写 cg_share_ref
+// U2 微信分流：落地页微信内可看（只读无碍），但录音须系统浏览器——
+// 微信内在注册 CTA 上方显示"用浏览器打开"引导块。
 import { el } from './components.js';
 import { getSharedCard, trackEventPublic } from '../api/client.js';
+import { isWeChatBrowser, copyToClipboard } from '../env.js';
 
 export function isShareRoute() {
   return /^#\/share\/card\/[\w-]+$/.test(location.hash || '');
@@ -77,6 +80,34 @@ export function renderSharePage(container) {
     }
 
     wrap.appendChild(card);
+
+    // U2：微信内浏览器引导（放在注册 CTA 上方，录音前置条件讲清楚）
+    if (isWeChatBrowser()) {
+      var guide = el('div', { style: {
+        background: '#FFF8E6', border: '1px solid #E8D9A0',
+        borderRadius: '12px', padding: '14px 16px', marginTop: '20px',
+      } });
+      guide.appendChild(el('div', {
+        style: { fontSize: '0.9rem', fontWeight: '700', color: '#6B5B1E', marginBottom: '6px' }
+      }, '微信里看卡片没问题，录音要用浏览器'));
+      guide.appendChild(el('div', {
+        style: { fontSize: '0.85rem', color: '#6B5B1E', lineHeight: '1.7', marginBottom: '10px' }
+      }, '点右上角「···」选择「在浏览器打开」，就能正常录音了。也可以先复制链接：'));
+      var copyBtn = el('button', {
+        style: {
+          width: '100%', padding: '10px', fontSize: '0.9rem', cursor: 'pointer',
+          border: '1px solid #E8D9A0', borderRadius: '10px',
+          background: '#fff', color: '#6B5B1E',
+        },
+        onclick: function() {
+          copyToClipboard(location.href).then(function(ok) {
+            copyBtn.textContent = ok ? '已复制 ✓ 去浏览器粘贴打开' : '复制失败，请手动全选地址栏';
+          });
+        }
+      }, '复制链接');
+      guide.appendChild(copyBtn);
+      wrap.appendChild(guide);
+    }
 
     // 注册引导：记录归因后跳注册
     var cta = el('button', {

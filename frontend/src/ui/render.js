@@ -368,6 +368,19 @@ function renderCanvas() {
   toolbar.appendChild(baselineBtn);
   wrap.appendChild(toolbar);
 
+  // 空图谱成长预告（U1 冷启动）：零节点时告诉老人花园会怎么长大
+  var emptyGrowth = el('div', {
+    className: 'canvas-empty-growth',
+    id: 'canvas-empty-growth',
+    style: { display: state.nodes.length === 0 ? '' : 'none' },
+  }, [
+    el('div', { className: 'empty-growth-title' }, '花园还空着'),
+    el('div', { className: 'empty-growth-body' },
+      '每说完一天的故事，这里就长出一朵记忆花——先从家人的名字说起吧'),
+    el('div', { className: 'empty-growth-hint' }, '今天的话题就在左侧横幅里'),
+  ]);
+  wrap.appendChild(emptyGrowth);
+
   wrap.appendChild(el('div', { className: 'canvas-overlay' }, '点击空白添加节点 · 拖拽移动 · 选中后点击另一节点连线'));
   wrap.appendChild(el('div', { className: 'zoom-hint' }, '滚轮缩放 · 拖拽节点'));
 
@@ -394,6 +407,9 @@ function updateSVG(svg) {
     // Full rebuild needed
     while (g.firstChild) g.removeChild(g.firstChild);
     _rebuildSVG(g);
+    // 空态成长预告跟随节点数显隐（第一朵记忆花长出来后撤下）
+    var emptyGrowth = document.getElementById('canvas-empty-growth');
+    if (emptyGrowth) emptyGrowth.style.display = state.nodes.length === 0 ? '' : 'none';
   } else {
     // Incremental update: only update positions and selection states
     _updateSVGIncremental(g);
