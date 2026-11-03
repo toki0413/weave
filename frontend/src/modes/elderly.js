@@ -10,6 +10,7 @@ import { getToken } from '../api/client.js';
 import { cacheMessages, getCachedMessages } from '../db/offline.js';
 import { savePendingAudio, getPendingAudioList, countPendingAudio, deletePendingAudio } from '../db/offline.js';
 import { localDateKey, computeStreak } from '../ui/dailyStreak.js';
+import { isWeChatBrowser } from '../env.js';
 import * as vs from '../3d/view-switcher.js';
 
 // story-7 主路径契约（PRD pilot-p0-repair）：
@@ -315,6 +316,17 @@ function handleRecord() {
     alert('当前浏览器录不了音频。可以直接打字告诉我，或换用 Chrome 浏览器。');
     showManualInput();
     return;
+  }
+
+  // U2：微信内置浏览器的录音权限与存储配额不可靠，会话内提示一次。
+  // 不硬拦——部分微信版本 getUserMedia 可用，老人自己确认即可。
+  if (isWeChatBrowser() && !sessionStorage.getItem('cg_wechat_rec_hint')) {
+    var go = confirm(
+      '微信里录音可能不稳定。\n' +
+      '建议点右上角「···」选「在浏览器打开」后再录。\n\n' +
+      '仍要在微信里录音吗？（选"确定"继续）');
+    sessionStorage.setItem('cg_wechat_rec_hint', '1');
+    if (!go) return;
   }
 
   if (_recording) {

@@ -216,6 +216,22 @@ body {
   background: rgba(31,27,22,0.75); color: #fff; padding: 6px 16px;
   border-radius: 100px; font-size: 0.75rem; pointer-events: none; white-space: nowrap;
 }
+/* U1 冷启动：空图谱成长预告（零节点时覆盖在画布中央，第一朵记忆花长出后撤下） */
+.canvas-empty-growth {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; pointer-events: none; max-width: 320px; padding: 0 16px;
+}
+.empty-growth-title {
+  font-size: 1.3rem; font-weight: 700; color: var(--ink, #1F1B16);
+  margin-bottom: 10px;
+}
+.empty-growth-body {
+  font-size: 1.02rem; line-height: 1.7; color: var(--ink2, #3D362E);
+  margin-bottom: 8px;
+}
+.empty-growth-hint {
+  font-size: 0.9rem; color: var(--muted, #5C5448);
+}
 .canvas-toolbar { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
 .mode-btn {
   padding: 6px 14px; border: 1px solid var(--rule2); border-radius: 100px;

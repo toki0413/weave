@@ -46,11 +46,17 @@ vi.mock('../services/websocket.js', () => ({
   isConnected: vi.fn(() => false),
   isUsingSSE: vi.fn(() => false),
 }));
+// U2 微信分流：默认非微信环境，微信用例里单独改返回值
+vi.mock('../env.js', () => ({
+  isWeChatBrowser: vi.fn(() => false),
+  copyToClipboard: vi.fn(async () => true),
+}));
 
 import { getSharedCard, trackEventPublic, trackEvent, generateMemoryCard, getFamilyMembers, linkFamilyMember, sendWebSocketCare, invalidateCache } from '../api/client.js';
 import { isShareRoute, shareCardId, renderSharePage } from '../ui/share-page.js';
 import { renderFamilyMode } from '../modes/family.js';
 import { renderDoctorMode } from '../modes/doctor.js';
+import { isWeChatBrowser } from '../env.js';
 
 function flushPromises() {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -150,6 +156,44 @@ describe('公开分享页', () => {
     cta.click();
     expect(localStorage.getItem('cg_share_ref')).toBe('card-xyz');
     localStorage.clear();
+  });
+});
+
+describe('微信内浏览器分流（U2）', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.clearAllMocks();
+    location.hash = '#/share/card/card-xyz';
+  });
+
+  it('非微信环境：不出现引导块，注册 CTA 正常', async () => {
+    var container = document.createElement('div');
+    document.body.appendChild(container);
+    renderSharePage(container);
+    await flushPromises();
+
+    expect(container.textContent).not.toContain('录音要用浏览器');
+    var cta = Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent.includes('记忆花园'));
+    expect(cta).toBeTruthy();
+  });
+
+  it('微信内：注册 CTA 上方显示浏览器引导块与复制链接按钮', async () => {
+    isWeChatBrowser.mockReturnValue(true);
+    var container = document.createElement('div');
+    document.body.appendChild(container);
+    renderSharePage(container);
+    await flushPromises();
+
+    expect(container.textContent).toContain('微信里看卡片没问题，录音要用浏览器');
+    expect(container.textContent).toContain('在浏览器打开');
+    var copyBtn = Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent === '复制链接');
+    expect(copyBtn).toBeTruthy();
+    // 注册 CTA 仍在（微信内也能注册，只是录音受限）
+    var cta = Array.from(container.querySelectorAll('button'))
+      .find((b) => b.textContent.includes('记忆花园'));
+    expect(cta).toBeTruthy();
   });
 });
 

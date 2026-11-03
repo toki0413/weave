@@ -45,23 +45,57 @@ TOPIC_POOL: List[Dict[str, str]] = [
 # 副话题池：主话题之外给一个轻量备选，保持极简（最多两个选择，避免决策负担）
 _FALLBACK_MODTALITY = {"voice": "primary", "text": "large_print", "haptic": "start_end"}
 
+# 冷启动种子序列（U1）：注册后前 7 天的日课按"家族人物 + 老物件"主题定类别。
+# 依据：NLP 实体抽取依赖前几条叙事积累，冷启动期图谱接近空白；家人的名字、
+# 老物件的名字是老人最不费力的实体来源，先喂这两类让图谱尽快"长出第一朵花"。
+# 序列固定为"每天一个类别"而不是每天一道题——同类别内仍按 hash 轮转，
+# 避免同一天注册的所有老人拿到完全相同的题目。
+SEED_SEQUENCE: List[str] = [
+    "person",  # 第 1 天：家人（最亲的人开场）
+    "item",    # 第 2 天：老物件（家里现成的记忆锚点）
+    "person",  # 第 3 天：老朋友
+    "event",   # 第 4 天：早饭（低门槛破冰）
+    "person",  # 第 5 天：谁帮了谁
+    "item",    # 第 6 天：买菜（生活琐事实体丰富）
+    "place",   # 第 7 天：最常去的地方
+]
+SEED_WINDOW_DAYS = len(SEED_SEQUENCE)
+
+
+def _seed_day_index(signup_date: date, the_date: date) -> Optional[int]:
+    """注册后第几天；不在 0..6 窗口内返回 None。
+
+    两个日期由调用方统一口径（端点传北京日期）后做差。
+    """
+    delta = (the_date - signup_date).days
+    if 0 <= delta < SEED_WINDOW_DAYS:
+        return delta
+    return None
+
 
 def get_daily_prompt(
     user_id: str,
     the_date: Optional[date] = None,
     use_llm: bool = True,
+    signup_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """获取当日日课题目。
 
     选题规则：hash(user_id + 日期) 决定题库内轮转，天然按天轮换，
     不同老人同日题目不同；无需额外存储。
+    冷启动：signup_date 提供且落在前 7 天窗口内时，按 SEED_SEQUENCE
+    的类别定池（家族人物 + 老物件优先），窗口外回到全池。
     LLM 个性化：配置了 LLM 时尝试生成一句个性化追问（personalized_hint），
     失败静默回退——题目本身永远可用。
     """
     the_date = the_date or date.today()
+    seed_day = _seed_day_index(signup_date, the_date) if signup_date else None
+    if seed_day is not None:
+        pool = [t for t in TOPIC_POOL if t["category"] == SEED_SEQUENCE[seed_day]]
+    else:
+        pool = TOPIC_POOL
     seed = hashlib.sha256(f"{user_id}:{the_date.isoformat()}".encode("utf-8")).hexdigest()
-    idx = int(seed[:8], 16) % len(TOPIC_POOL)
-    topic = TOPIC_POOL[idx]
+    topic = pool[int(seed[:8], 16) % len(pool)]
 
     result: Dict[str, Any] = {
         "date": the_date.isoformat(),
@@ -74,6 +108,8 @@ def get_daily_prompt(
         # 多模态呈现契约：voice 为主通道，text 供大字显示，haptic 起止提示
         "modality": dict(_FALLBACK_MODTALITY),
         "duration_hint": "60秒",
+        # 冷启动种子进度：0-6 = 注册后第几天；null = 已出窗口
+        "seed_day": seed_day,
         "personalized_hint": None,
         "llm_provider": None,
     }
