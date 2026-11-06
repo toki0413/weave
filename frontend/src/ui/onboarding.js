@@ -7,7 +7,7 @@ import { saveState } from './interactions.js';
 var STEPS = [
   {
     title: '欢迎使用',
-    body: '欢迎使用织忆·认知花园，让我们一起记录每天的回忆',
+    body: '欢迎使用织忆，让我们一起记录每天的回忆',
   },
   {
     title: '语音输入',

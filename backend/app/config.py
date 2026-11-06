@@ -30,7 +30,7 @@ def _load_or_create_secret() -> str:
         return secrets.token_hex(32)
 
 class Settings(BaseSettings):
-    app_name: str = "Cognitive Garden API"
+    app_name: str = "Weave API"
     debug: bool = Field(False, validation_alias=AliasChoices("CG_DEBUG", "debug"))
 
     # Database — 生产用 PostgreSQL，开发/测试可回退 SQLite

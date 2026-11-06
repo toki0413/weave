@@ -1,6 +1,6 @@
 version: "3.9"
 
-# ============ 织忆 · 认知花园 生产编排 ============
+# ============ 织忆 生产编排 ============
 # 必要环境变量（缺失时 compose 直接拒绝启动，避免以默认凭据上线）：
 #   CG_PG_PASSWORD     PostgreSQL 密码
 #   CG_REDIS_PASSWORD  Redis 密码
