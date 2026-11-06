@@ -4,5 +4,5 @@
 pytest>=9.2.0
 pytest-asyncio==1.4.0
 pytest-cov
-hypothesis==6.156.6
+hypothesis==6.170.14
 sphinx==9.1.0
