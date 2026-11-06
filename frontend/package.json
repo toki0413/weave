@@ -1,7 +1,7 @@
 {
   "name": "cognitive-garden",
   "version": "2.1.0",
-  "description": "织忆·认知花园 - 认知评估系统前端",
+  "description": "织忆 - 认知健康辅助系统前端",
   "type": "module",
   "scripts": {
     "dev": "vite",

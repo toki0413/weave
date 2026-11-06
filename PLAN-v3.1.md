@@ -1,4 +1,4 @@
-# Cognitive Garden V3.1 全面打磨计划
+# 织忆 Weave V3.1 全面打磨计划
 
 ## 目标
 1. 将 LLM 深度集成做成**可选项**（Feature Flag 控制），零成本开启/关闭

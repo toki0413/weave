@@ -54,7 +54,7 @@ function showInstallBanner() {
   ].join(';');
 
   var text = document.createElement('span');
-  text.textContent = '将「织忆·认知花园」添加到桌面，离线也能使用';
+  text.textContent = '将「织忆」添加到桌面，离线也能使用';
   text.style.flex = '1';
   text.style.lineHeight = '1.4';
 

@@ -50,7 +50,7 @@ export function renderSharePage(container) {
     });
     card.appendChild(el('div', {
       style: { fontSize: '0.8rem', color: 'var(--muted, #5C5448)', marginBottom: '4px' }
-    }, '织忆 · 认知花园'));
+    }, '织忆'));
     card.appendChild(el('h1', {
       style: { fontSize: '1.4rem', color: 'var(--ink, #1F1B16)', margin: '0 0 4px' }
     }, (p.elderly_name || '家人') + '的' + (p.week_label || '本周') + '记忆'));
