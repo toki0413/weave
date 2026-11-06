@@ -1547,3 +1547,432 @@ html {
 }
 :root.elderly-mode .view-mode-btn:not(.active) { color: #0A0A0A !important; }
 :root.elderly-mode .view-mode-btn.active { background: #122B12 !important; }
+
+/* ==================================================================
+ * 视觉统一补丁（2026-11 美术优化）
+ * 原则：只补令牌与状态，不改结构、不改信息层级、不覆盖既有配色语义。
+ * 全部规则追加在文件末尾，便于单独回滚。
+ * ================================================================== */
+
+/* ---------- 1. 设计令牌：表面 / 圆角 / 阴影 / 间距 / 动效 ---------- */
+:root {
+  --surface: #FFFFFF;            /* 卡片、输入框等抬升表面 */
+  --surface-2: #FBF9F5;          /* 次级表面（表头、条纹） */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --shadow-xs: 0 1px 2px rgba(31, 27, 22, 0.05);
+  --shadow-sm: 0 1px 3px rgba(31, 27, 22, 0.08), 0 1px 2px rgba(31, 27, 22, 0.04);
+  --shadow-md: 0 4px 16px rgba(31, 27, 22, 0.10);
+  --shadow-lg: 0 16px 40px rgba(31, 27, 22, 0.18);
+  --ring: 0 0 0 3px var(--accent-l);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --header-h: 56px;
+  --panel-left-w: 260px;
+  --panel-right-w: 280px;
+}
+
+/* 老人端：圆角放大、阴影收敛（高对比下重阴影会显脏） */
+:root.elderly-mode {
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.07);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.10);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 14px 34px rgba(0, 0, 0, 0.16);
+  --panel-left-w: 320px;
+  --panel-right-w: 340px;
+}
+
+/* 暗色主题：表面必须跟随，否则卡片会退回白底 */
+[data-theme="dark"] {
+  --surface: #2A2A2A;
+  --surface-2: #242424;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.50);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.60);
+}
+
+/* ---------- 2. 表面与卡片：统一圆角、描边、阴影层级 ---------- */
+.voice-card,
+.day-card,
+.scale-card,
+.doc-metric,
+.fam-stat,
+.alert-card,
+.decline-mini-trend,
+.decline-anon-trend,
+.notif-dropdown,
+.toast,
+.lexicon-chip,
+.memory-card-section > div {
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+/* 交互型卡片：悬停抬升一级，按下回落 */
+.palette-btn,
+.edge-btn,
+.day-card,
+.scale-option,
+.lexicon-chip {
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color var(--dur) var(--ease),
+              background-color var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.palette-btn:hover:not(:disabled),
+.edge-btn:hover:not(:disabled) {
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.palette-btn:active:not(:disabled),
+.edge-btn:active:not(:disabled),
+.palette-btn[aria-pressed="true"],
+.edge-btn.active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* 输入类控件统一焦点环（既有 focus 规则保留，这里补齐抬升面） */
+.voice-textarea,
+.lexicon-input,
+.lexicon-search,
+.lexicon-textarea {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+.voice-textarea:focus,
+.lexicon-input:focus,
+.lexicon-search:focus {
+  box-shadow: var(--ring);
+}
+
+/* ---------- 3. 按钮：补齐默认 / 悬停 / 按下 / 禁用四态 ---------- */
+.btn-primary,
+.btn-secondary,
+.e-btn,
+.onboarding-btn,
+.mode-btn,
+.view-btn,
+.view-mode-btn,
+.notif-mark-all-btn,
+.daily-prompt-speak,
+.palette-btn,
+.edge-btn {
+  transition: background-color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease),
+              box-shadow var(--dur) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+
+/* 按下：1px 下沉，给出触觉反馈 */
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.e-btn:active:not(:disabled),
+.onboarding-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn-primary:active:not(:disabled) { background: var(--accent-d); }
+.btn-secondary:active:not(:disabled) { background: var(--bg2); }
+
+/* 键盘焦点：与全局 focus-visible 一致，额外补内描边避免贴边裁切 */
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.e-btn:focus-visible,
+.onboarding-btn:focus-visible,
+.palette-btn:focus-visible,
+.edge-btn:focus-visible {
+  outline: 2px solid var(--accent-d);
+  outline-offset: 2px;
+}
+
+/* 禁用：降饱和 + 禁用光标，并压掉残留 hover 效果 */
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.e-btn:disabled,
+.onboarding-btn:disabled,
+.mode-btn:disabled,
+.palette-btn:disabled,
+.edge-btn:disabled,
+button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+  filter: grayscale(0.25);
+}
+.btn-primary:disabled:hover { background: var(--accent); }
+.btn-secondary:disabled:hover {
+  border-color: var(--rule);
+  color: var(--ink2);
+  background: var(--surface);
+}
+.palette-btn:disabled:hover,
+.edge-btn:disabled:hover { background: var(--surface); border-color: var(--rule); }
+.onboarding-btn-primary:disabled:hover { background: var(--accent-d); transform: none; }
+
+/* 老人端：禁用态不能只靠透明度（低视力下不可辨），补虚线与文案位 */
+:root.elderly-mode button:disabled,
+:root.elderly-mode .e-btn:disabled {
+  opacity: 1;
+  color: var(--muted);
+  background: var(--bg2);
+  border: 2px dashed var(--rule2);
+}
+
+/* ---------- 4. 排版：间距节奏与层级对比 ---------- */
+.panel-section { padding: var(--space-4); }
+.panel-title {
+  /* 中文无大小写之分，uppercase 只对夹杂英文生效且放大噪声 */
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 0.72rem;
+  margin-bottom: var(--space-3);
+  line-height: 1.4;
+}
+.panel-title::before {
+  flex-shrink: 0;
+  align-self: center;
+}
+.onboarding-step-tag { text-transform: none; letter-spacing: 0.04em; }
+
+/* 卡片内标题与正文的层级差：字重承担层级，字号只做微调 */
+.onboarding-title { font-size: 1.35rem; letter-spacing: -0.01em; }
+.onboarding-body { color: var(--ink2); }
+
+/* 通用堆叠节奏：相邻块之间统一 8/12/16 三档 */
+.e-stack { gap: var(--space-3); }
+.voice-actions { margin-top: var(--space-3); gap: var(--space-2); }
+.palette-grid { gap: var(--space-2); }
+.edge-list { gap: 6px; }
+
+/* ---------- 5. 图标与文字对齐 ---------- */
+.palette-icon,
+.notif-item-icon,
+.header-logo,
+.toast-icon {
+  line-height: 1;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.notif-bell-btn,
+.daily-prompt-speak {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* 带图标的按钮：图标与文字基线对齐，间距统一 */
+.edge-btn > *,
+.palette-btn > * { min-width: 0; }
+.panel-title,
+.header-left,
+.header-right,
+.view-switcher,
+.font-scale { align-items: center; }
+
+/* ---------- 6. 弹窗与浮层 ---------- */
+.onboarding-overlay {
+  background: rgba(31, 27, 22, 0.58);
+  backdrop-filter: blur(4px);
+  padding: var(--space-4);
+}
+.onboarding-card {
+  width: min(460px, 100%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.onboarding-actions { gap: var(--space-3); }
+.onboarding-btn { border-radius: var(--radius-pill); }
+
+.notif-dropdown {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.toast {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---------- 7. 响应式：三档收敛（此前无任何宽度断点） ---------- */
+@media (max-width: 1280px) {
+  .panel-left { width: 240px; }
+  .panel-right { width: 260px; }
+  .mode-elderly .panel-left { width: 300px; }
+  .mode-elderly .panel-right { width: 320px; }
+}
+
+@media (max-width: 1080px) {
+  .panel-left { width: 220px; }
+  .panel-right { width: 240px; }
+  .mode-elderly .panel-left { width: 280px; }
+  .mode-elderly .panel-right { width: 300px; }
+  .header { padding: 0 var(--space-4); }
+}
+
+/* 平板竖屏 / 手机横屏：三栏改为纵向堆叠，信息结构不变，仅改变排列 */
+@media (max-width: 900px) {
+  body { overflow: auto; }
+  #app { height: auto; min-height: 100vh; }
+  .main {
+    flex-direction: column;
+    overflow: visible;
+    gap: 0;
+  }
+  .panel-left,
+  .panel-right,
+  .mode-elderly .panel-left,
+  .mode-elderly .panel-right {
+    width: 100%;
+    max-width: none;
+    overflow: visible;
+    border-left: none;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .canvas-wrap {
+    min-height: 56vh;
+    order: -1;            /* 画布置顶：先看到花园，再向下是输入与详情 */
+    border-bottom: 1px solid var(--rule);
+  }
+  .header {
+    height: auto;
+    min-height: var(--header-h);
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+  .header-left { flex: 1 1 auto; min-width: 0; }
+  .header-title { font-size: 1.1rem; }
+  .header-right { flex-wrap: wrap; gap: var(--space-2); }
+  .notif-dropdown { width: min(360px, calc(100vw - 24px)); }
+}
+
+/* 手机竖屏：单列、按钮全宽、触控目标不缩小 */
+@media (max-width: 600px) {
+  .panel-section { padding: var(--space-3); }
+  .canvas-wrap { min-height: 48vh; }
+  .voice-actions { flex-direction: column; }
+  .btn-primary,
+  .btn-secondary { flex: none; width: 100%; }
+  .palette-grid { grid-template-columns: 1fr; }
+  .onboarding-card { padding: 22px 18px 18px; }
+  .onboarding-title { font-size: 1.2rem; }
+  .onboarding-actions { flex-direction: column-reverse; }
+  .onboarding-btn { width: 100%; }
+  .toast-container { left: var(--space-3); right: var(--space-3); bottom: var(--space-3); }
+  .toast { width: 100%; }
+  .daily-prompt-banner { white-space: normal; }
+}
+
+/* ---------- 8. 细节：滚动条 / 选中色 / 安全区 ---------- */
+::selection {
+  background: var(--accent-l);
+  color: var(--ink);
+}
+.panel-left,
+.panel-right,
+.notif-list,
+.lexicon-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule2) transparent;
+}
+.panel-left::-webkit-scrollbar,
+.panel-right::-webkit-scrollbar,
+.notif-list::-webkit-scrollbar { width: 10px; }
+.panel-left::-webkit-scrollbar-thumb,
+.panel-right::-webkit-scrollbar-thumb,
+.notif-list::-webkit-scrollbar-thumb {
+  background: var(--rule2);
+  border-radius: var(--radius-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.panel-left::-webkit-scrollbar-track,
+.panel-right::-webkit-scrollbar-track { background: transparent; }
+
+/* iOS 底部安全区，避免按钮被系统手势条遮挡 */
+.toast-container,
+.onboarding-actions {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* ---------- 9. 小屏内容限宽与排版收敛 ---------- */
+/* 纵向堆叠后面板变为全宽，若不加限宽，概览卡会被拉到上千像素宽，
+   数值与标签分居两端，阅读时视线跨度过长。 */
+@media (max-width: 900px) {
+  .panel-left .panel-section,
+  .panel-right .panel-section {
+    width: 100%;
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .voice-actions { max-width: 560px; }
+  .e-row { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  /* 顶栏分两行：标题独占一行，控件另起一行，避免三者挤在半屏宽内 */
+  .header-left { flex: 1 0 100%; }
+  .header-right { flex: 1 0 100%; justify-content: space-between; }
+
+  /* 画布空态：窄屏下字号与行宽同步收敛，避免每行只剩 4-5 个字 */
+  .canvas-empty-growth { max-width: 100%; padding: 0 var(--space-4); }
+  .empty-growth-title { font-size: 1.15rem; }
+  .empty-growth-body { font-size: 0.95rem; line-height: 1.65; }
+  .empty-growth-hint { font-size: 0.85rem; }
+
+  .panel-left .panel-section,
+  .panel-right .panel-section { max-width: none; }
+}
+
+/* ---------- 10. 窄屏顶栏控件压缩（不改触控高度） ---------- */
+/* 老人端按钮 min-height 48px，横向 padding 偏大时三组控件会挤到第三行，
+   顶栏高度可达视口 1/5。这里只收水平内边距，触控高度保持不变。 */
+@media (max-width: 600px) {
+  .header { row-gap: 6px; padding: 8px var(--space-3); }
+  .header-right { gap: 6px; }
+  .view-switcher { padding: 2px; }
+  .view-btn { padding: 8px 10px; }
+  .font-scale { padding: 2px; }
+  .font-scale button { width: 34px; }
+  .day-badge { padding: 6px 10px; }
+  :root.elderly-mode .view-btn { padding: 8px 10px; }
+  :root.elderly-mode .font-scale button { width: 34px; height: 40px; }
+  :root.elderly-mode .day-badge { padding: 6px 10px; }
+}
+
+/* ---------- 11. 画布底部操作提示的窄屏换行 ---------- */
+/* 原规则 white-space: nowrap，文案长度 + 老人端字号在手机上必然超出
+   画布宽度，被 .canvas-wrap 的 overflow:hidden 裁掉首尾。 */
+@media (max-width: 760px) {
+  .canvas-overlay {
+    white-space: normal;
+    max-width: calc(100% - 24px);
+    width: max-content;
+    text-align: center;
+    line-height: 1.4;
+    padding: 6px 12px;
+    border-radius: 12px;
+  }
+  .zoom-hint { display: none; }   /* 触摸设备无滚轮，提示无效信息 */
+}
