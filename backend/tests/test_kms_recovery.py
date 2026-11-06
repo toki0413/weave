@@ -12,9 +12,18 @@ from app.services import kms
 
 @pytest.fixture
 def kms_tmp_home(tmp_path, monkeypatch):
-    """FileKMS 密钥目录指到临时目录，隔离测试与真实环境（防覆盖真机密钥）"""
+    """FileKMS 密钥目录指到临时目录，隔离测试与真实环境（防覆盖真机密钥）。
+
+    同时把 provider 锁定为 file：CI 用 CG_KMS_PROVIDER=env 跑测试，
+    若不锁定，这些用例会拿到 EnvKMS 并以「不支持导出」失败——失败
+    反映的是环境差异，不是被测逻辑。
+    """
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "kms_provider", "file")
+    monkeypatch.setattr(cfg, "kms_master_key", "")
     old = kms._provider
     kms._provider = None
     yield tmp_path
