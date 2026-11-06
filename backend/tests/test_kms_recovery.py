@@ -21,14 +21,28 @@ def kms_tmp_home(tmp_path, monkeypatch):
     kms._provider = old
 
 
-def _register(client, username, role):
+def _register(client, username, role="elderly"):
+    """注册用户并返回鉴权头。
+
+    权限提升角色走"运维在库里改 role"的路径：自助注册接口只接受
+    elderly / family，admin 必须由管理侧开通（见 auth.register）。
+    """
     r = client.post("/api/v1/auth/register", json={
         "username": username,
         "password": "Test123456!",
         "name": username,
-        "role": role,
+        "role": "elderly",
     })
     assert r.status_code == 200, r.text
+    if role != "elderly":
+        from app.database import SessionLocal
+        from app.models import User
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.username == username).update({"role": role})
+            db.commit()
+        finally:
+            db.close()
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 

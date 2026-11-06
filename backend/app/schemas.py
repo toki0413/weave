@@ -3,11 +3,23 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # ========== Auth ==========
+# bcrypt 5.0 起 hashpw 拒绝超过 72 字节的密码（4.x 静默截断）。
+# 中文/emoji 密码按字符数限制不足以约束字节数，这里统一到字节上限，
+# 与 auth._validate_password 保持一致，避免 schema 放行、服务层 500。
+BCRYPT_MAX_BYTES = 72
+
+
+def _check_password_bytes(v: str) -> str:
+    if len(v.encode("utf-8")) > BCRYPT_MAX_BYTES:
+        raise ValueError(f"密码过长：UTF-8 编码后不得超过 {BCRYPT_MAX_BYTES} 字节")
+    return v
+
+
 class UserCreate(BaseModel):
     # username 是主登录标识；phone 可选。
     # 老接口只传 phone 时，自动用 phone 当 username，保证向后兼容。
     username: Optional[str] = Field(None, min_length=2, max_length=50)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8, max_length=72)
     role: str = "elderly"
     name: Optional[str] = None
     phone: Optional[str] = Field(None, min_length=4, max_length=20)
@@ -27,7 +39,7 @@ class UserCreate(BaseModel):
             raise ValueError("密码需包含至少一位数字")
         if not any(c.isalpha() for c in v):
             raise ValueError("密码需包含至少一位字母")
-        return v
+        return _check_password_bytes(v)
 
 
 class UserLogin(BaseModel):

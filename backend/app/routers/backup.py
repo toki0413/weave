@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from io import BytesIO
 from app.database import get_db
+from app.config import get_settings
 from app.models import User, Session as SessionModel, Baseline, UserState
 from app.routers.auth import get_current_user
 from app.rate_limit import rate_limit
@@ -134,14 +135,38 @@ async def import_data(file: UploadFile = File(...), db: Session = Depends(get_db
     if not file.filename or not (file.filename.endswith(".json") or file.filename.endswith(".json.gz")):
         raise HTTPException(status_code=400, detail="请上传 JSON 备份文件（.json 或 .json.gz）")
 
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="备份文件超过 10MB 限制")
+    settings = get_settings()
+    max_bytes = settings.max_backup_import_mb * 1024 * 1024
 
-    # 检测 gzip 并解压
+    # 限量读取：即使客户端声明了超大 Content-Length，也只读上限 +1 字节
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"备份文件超过 {settings.max_backup_import_mb}MB 限制",
+        )
+
+    # 检测 gzip 并解压（分块 + 解压上限，防压缩炸弹）
     if file.filename.endswith(".json.gz"):
         try:
-            content = gzip.decompress(content)
+            decompressed_limit = max_bytes * 10
+            out = BytesIO()
+            with gzip.GzipFile(fileobj=BytesIO(content)) as gz:
+                total = 0
+                while True:
+                    chunk = gz.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > decompressed_limit:
+                        raise HTTPException(
+                            status_code=413,
+                            detail="备份文件解压后体积超出限制",
+                        )
+                    out.write(chunk)
+            content = out.getvalue()
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"gzip 解压失败: {e}")
 
@@ -230,9 +255,14 @@ async def import_data(file: UploadFile = File(...), db: Session = Depends(get_db
     }
 
 
-@router.get("/logs")
+@router.get("/logs", dependencies=[rate_limit(5, 300)])
 async def export_logs(current_user: User = Depends(get_current_user)):
-    """打包应用日志目录为 zip 供下载（用于技术支持排查）"""
+    """打包应用日志目录为 zip 供下载（用于技术支持排查）
+
+    仅 admin：日志包含全站请求记录与错误堆栈，任意登录用户可取会构成
+    横向越权（可见其他用户的活动痕迹）。
+    """
+    _require_admin(current_user)
     log_dir = Path.home() / ".cognitive-garden" / "logs"
     if not log_dir.exists():
         raise HTTPException(status_code=404, detail="暂无日志文件")

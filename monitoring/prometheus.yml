@@ -11,3 +11,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["backend:8004"]
+    # 若后端设置了 CG_METRICS_TOKEN，取消下面两行注释并填入同一令牌；
+    # 未设置时后端仅接受私网来源（容器网络内的 backend:8004 满足）。
+    # authorization:
+    #   credentials: "<CG_METRICS_TOKEN 的值>"

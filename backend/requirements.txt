@@ -1,3 +1,6 @@
+# ===== 生产运行时依赖 =====
+# 测试与文档工具见 requirements-dev.txt（不进生产镜像）
+
 fastapi==0.139.0
 uvicorn[standard]==0.51.0
 sqlalchemy==2.1.6
@@ -10,20 +13,14 @@ cryptography>=50.0.2
 python-multipart==0.0.32
 httpx==0.28.1
 jieba==0.42.1
-pytest>=9.2.0
-pytest-asyncio==1.4.0
 alembic==1.18.5
 vosk==0.3.45
+prometheus-client==0.26.0
 
 # 企业级依赖
 psycopg2-binary==2.9.13   # PostgreSQL 驱动
 redis==8.1.0              # 限流/SSE Pub/Sub/token 黑名单
-boto3>=1.43.46             # AWS KMS（可选，仅 kms_provider=aws 时需要）
-
-# 测试与文档
-hypothesis==6.156.6
-sphinx==9.1.0
-prometheus-client==0.26.0
+boto3>=1.43.46            # AWS KMS（可选，仅 kms_provider=aws 时需要）
 
 # ASR: 火山引擎一句话识别（asr_volc_* 配置齐备时启用）
 websocket-client==1.8.0

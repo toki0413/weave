@@ -202,16 +202,75 @@ npx playwright test
 3. 构建 Tauri：`cd src-tauri && cargo build --release`
 4. 将 `cognitive-garden.exe`、`backend/`、`dist/` 放入 `release/` 目录
 
+### 容器化部署（生产）
+
+```bash
+# 1. 构建前端（产物挂载给 nginx）
+cd frontend && npm ci && npm run build && cd ..
+
+# 2. 准备密钥：缺失时 compose 会拒绝启动
+cp .env.example .env
+# 必填：CG_PG_PASSWORD / CG_REDIS_PASSWORD / CG_JWT_SECRET / CG_KMS_MASTER_KEY
+# 生成 JWT 密钥：openssl rand -hex 32
+# 生成 KMS 主密钥：python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+
+# 3. 启动（含反代）
+docker compose --profile with-nginx up -d
+# 可选监控：--profile with-nginx --profile with-monitoring
+```
+
+**首次启动检查**
+
+| 检查项 | 命令 | 期望 |
+|---|---|---|
+| 后端就绪 | `curl -fsS http://127.0.0.1/health` | `status: ok` |
+| 反代安全头 | `curl -sI http://127.0.0.1/ \| grep -i x-content-type` | `nosniff` |
+| 指标不外泄 | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/metrics` | `404` |
+| 上传目录不外泄 | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/uploads/x` | `404` |
+| SSE 鉴权 | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/events` | `401` |
+| 迁移版本 | `docker compose exec backend alembic current` | 与 `alembic heads` 一致 |
+
+**网络暴露面**：仅 nginx 的 80 端口对外；backend 绑定 `127.0.0.1:8004` 供本机调试，
+PostgreSQL / Redis 只在容器网络内可达（不映射宿主机端口）。
+
+### 管理员与医生账号
+
+自助注册只接受 `elderly` / `family` 角色——`admin` / `doctor` 具备跨用户数据与密钥
+导出权限，开放自助注册等于放弃权限边界。开通方式（运维在库中提升）：
+
+```bash
+docker compose exec postgres psql -U cg_user -d cognitive_garden \
+  -c "UPDATE users SET role='admin' WHERE username='<用户名>';"
+```
+
+提升后该用户无需重新登录（每次请求按库中角色校验），但建议重新登录以刷新前端菜单。
+
 ### 环境变量
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `CG_JWT_SECRET` | JWT 密钥 | 自动生成并持久化 |
-| `CG_PORT` | 后端端口 | 8004 |
-| `CG_AUTO_MIGRATE` | 自动迁移 | 1 |
-| `CG_DEBUG` | 调试模式 | 0 |
-| `ALERT_OUTBOUND_MIN_SEVERITY` | 出站告警门槛（info/warning/danger） | warning |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_SSL` | 告警邮件通道（G1），留空关闭 | 空 |
-| `ALERT_WEBHOOK_URL` | 企业微信群机器人 webhook（告警值守群，G1） | 空 |
+
+变量名同时接受 `CG_` 前缀与裸字段名两种写法（兼容历史部署）。
+
+| 变量 | 说明 | 必填 |
+|------|------|------|
+| `CG_PG_PASSWORD` | PostgreSQL 密码 | 容器部署必填 |
+| `CG_REDIS_PASSWORD` | Redis 密码（Redis 以 `--requirepass` 启动） | 容器部署必填 |
+| `CG_JWT_SECRET` | JWT 签名密钥；更换会使全部已签发 token 失效 | 容器部署必填 |
+| `CG_KMS_PROVIDER` | `file`（单机默认）/ `env` / `aws` | 否 |
+| `CG_KMS_MASTER_KEY` | env 模式的 base64(32B) 主密钥 | env 模式必填 |
+| `CG_CORS_ORIGINS` | 跨域前端域名，逗号分隔；同源反代部署可留空 | 否 |
+| `CG_TRUST_PROXY` | 前置反代可信时按 `X-Real-IP`/XFF 末跳取客户端 IP | 反代部署建议 `1` |
+| `CG_METRICS_TOKEN` | 设置后 `/metrics` 需 `Authorization: Bearer` | 否 |
+| `CG_SERVE_UPLOADS` | 是否把语音密文目录作为静态资源暴露（默认 `0`） | 否 |
+| `CG_DATA_DIR` | 数据盘检查路径（健康检查用） | 否 |
+| `CG_AUTO_MIGRATE` | 启动时自动执行 alembic 迁移 | 否（默认 1） |
+| `CG_ALLOW_CREATE_ALL` | 迁移失败时降级 `create_all`（仅开发） | 否（默认 0） |
+| `CG_DEBUG` | 调试模式（开放 `/docs`、CORS 开发来源） | 否 |
+| `CG_PORT` / `CG_HOST` | 监听端口/地址 | 否 |
+| `ALERT_OUTBOUND_MIN_SEVERITY` | 出站告警门槛（info/warning/danger） | 否 |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_SSL` | 告警邮件通道（G1），留空关闭 | 否 |
+| `ALERT_WEBHOOK_URL` | 企业微信群机器人 webhook（G1） | 否 |
+
+**迁移语义**：生产环境迁移失败即终止启动（不会带着不一致的 schema 对外服务）；
+PostgreSQL 下多副本同时启动时通过 advisory lock 串行化迁移，只有一个实例执行。
 
 ### 密钥备份（必做）
 file KMS 的 wrap key 与数据同机存放，密钥丢失 = 全部加密内容永久不可解。
@@ -234,11 +293,19 @@ docker exec -i cg-pg-backup pg_restore -h postgres -U cg_user \
 ### 监控与告警（S1）
 `docker compose --profile with-monitoring up -d` 启动 Prometheus（:9090），
 规则见 `monitoring/alert_rules.yml`：5xx 率 >5%、ASR 失败率 >30%、
-漏录提醒 job 超 25h 未执行。
+漏录提醒 job 超 25h 未执行。若设置了 `CG_METRICS_TOKEN`，需在
+`monitoring/prometheus.yml` 中填入同一令牌（文件内已留注释位置）。
 
 ### 账号注销（G4）
 登录用户在左侧「账户与安全」面板点「注销账号」，密码确认后级联删除
 全部业务数据；分析事件与审计日志匿名化/去关联化保留（合规要求）。
+
+### 回滚
+
+应用回滚：`docker compose down && git checkout <上一个稳定 tag> && docker compose --profile with-nginx up -d --build`。
+数据库回滚需先确认迁移可逆（`alembic downgrade -1`）；本仓库迁移以新增列/表为主，
+破坏性变更需先恢复 pg 备份再切回旧镜像。**镜像回滚不会自动回滚 schema**，
+因此升级前务必确认最近一次 `pg-backup` 成功。
 
 ---
 
@@ -247,8 +314,15 @@ docker exec -i cg-pg-backup pg_restore -h postgres -U cg_user \
 - 业务数据（叙事文本、量表答案）使用 **AES-256-GCM** 加密
 - 主密钥架构：随机主密钥加密数据，KEK（密码派生）仅用于包装主密钥
 - 修改密码无需重加密所有历史数据
-- JWT 密钥持久化存储，文件权限限制为 `0o600`
-- 限流保护：敏感操作有速率限制
+- JWT 密钥持久化存储，文件权限限制为 `0o600`；容器部署经环境变量注入
+- 密码校验：bcrypt，UTF-8 上限 72 字节（bcrypt 5.0 起超长输入直接拒绝），超限返回可读校验错误
+- 登录防爆破：IP 维度限流（5 次 / 5 分钟）+ 账号维度锁定（5 次失败锁 15 分钟，跨 IP 有效）；账号不存在时执行等价 bcrypt 计算，避免响应时间枚举账号
+- 限流客户端 IP：默认只认 TCP 对端地址；仅在 `CG_TRUST_PROXY=1` 时采信反代写入的 `X-Real-IP` / XFF 末跳
+- 可观测端点：`/metrics` 需 Bearer 令牌或私网来源；`/events` 强制校验 access token（query 传递）+ 15s 心跳
+- 语音留言密文目录默认不作为静态资源暴露（`CG_SERVE_UPLOADS=0`）
+- 错误响应不返回服务器路径与堆栈，返回 `request_id` 供日志关联
+- 上传体积上限：STT 音频默认 10MB、备份导入默认 10MB（解压后 10 倍上限防压缩炸弹）
+- 容器以非 root 用户运行（entrypoint 修正卷属主后 `gosu` 降权），镜像内不含 `.env` 与测试数据
 - KMS 提供 file（单机默认）/ env / aws 三种 provider：file 模式密钥持久化到用户目录（0o600），重启后数据仍可解密；wrap key 支持导出备份与灾后恢复（见上方"密钥备份"）
 - 语音留言（v2，2026-10 重构）：每条消息独立随机内容密钥加密，各用户用**自己的**主密钥包装/解包自己的密钥副本。如实定性为**服务端中转加密**（服务端有能力恢复明文），不是端到端加密；升级路径为 X25519 ECDH 密钥协商（见 e2ee.py 模块文档）
 

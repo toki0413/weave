@@ -27,16 +27,20 @@ def init_redis() -> bool:
         from app.config import get_settings
         settings = get_settings()
 
+        # 注意：不传 retry_on_timeout —— redis-py 6.0 起已移除该参数，
+        # 传入会抛 TypeError 并被下面的 except 吞掉，导致生产环境静默降级
+        # 到内存模式（限流、token 黑名单、跨实例 SSE 全部失效）。
         _redis = redis.Redis.from_url(
             settings.redis_url,
             decode_responses=True,
             socket_connect_timeout=2,
-            socket_timeout=2,
-            retry_on_timeout=True,
+            socket_timeout=5,
+            socket_keepalive=True,
+            health_check_interval=30,
         )
         _redis.ping()
         _redis_available = True
-        logger.info("Redis 已连接: %s", settings.redis_url)
+        logger.info("Redis 已连接: %s", _sanitize_redis_url(settings.redis_url))
         return True
     except ImportError:
         logger.warning("redis 库未安装，限流/SSE/黑名单将降级到内存模式")
@@ -46,6 +50,39 @@ def init_redis() -> bool:
         logger.warning("Redis 连接失败，降级到内存模式: %s", e)
         _redis_available = False
         return False
+
+
+def _sanitize_redis_url(url: str) -> str:
+    """日志中隐去 Redis 密码"""
+    if "@" in url:
+        head, tail = url.rsplit("@", 1)
+        if "//" in head:
+            scheme, _ = head.split("//", 1)
+            return f"{scheme}//***@{tail}"
+    return url
+
+
+def get_pubsub_connection():
+    """订阅专用连接：不带 socket_timeout。
+
+    普通连接设置了 socket_timeout，用它跑 pubsub.listen() 会在空闲超时后
+    抛异常并终止订阅线程，SSE 跨实例广播随之静默失效。
+    """
+    if not _redis_available:
+        return None
+    try:
+        import redis
+        from app.config import get_settings
+        return redis.Redis.from_url(
+            get_settings().redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
+    except Exception as e:
+        logger.warning("Redis 订阅连接创建失败: %s", e)
+        return None
 
 
 def get_redis():
