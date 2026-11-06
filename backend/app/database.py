@@ -22,13 +22,15 @@ if _is_sqlite:
     connect_args = {"check_same_thread": False}
 else:
     # PostgreSQL / 其他生产级数据库
+    # connect_timeout：数据库不可达时快速失败，避免健康检查与请求线程被挂死
     pool_kwargs = {
         "pool_size": settings.db_pool_size,
         "max_overflow": settings.db_max_overflow,
         "pool_recycle": settings.db_pool_recycle,
         "pool_pre_ping": True,
+        "pool_timeout": 10,
     }
-    connect_args = {}
+    connect_args = {"connect_timeout": 5} if "postgresql" in settings.database_url else {}
 
 engine = create_engine(
     settings.database_url,

@@ -1,6 +1,7 @@
 import os
 import secrets
 import json
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
@@ -30,32 +31,73 @@ def _load_or_create_secret() -> str:
 
 class Settings(BaseSettings):
     app_name: str = "Cognitive Garden API"
-    debug: bool = False
+    debug: bool = Field(False, validation_alias=AliasChoices("CG_DEBUG", "debug"))
 
     # Database — 生产用 PostgreSQL，开发/测试可回退 SQLite
-    database_url: str = "sqlite:///./cognitive_garden.db"
+    database_url: str = Field(
+        "sqlite:///./cognitive_garden.db",
+        validation_alias=AliasChoices("CG_DATABASE_URL", "database_url", "DATABASE_URL"),
+    )
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle: int = 3600
 
     # Redis — 限流、SSE Pub/Sub、token 黑名单共享存储
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = Field(
+        "redis://localhost:6379/0",
+        validation_alias=AliasChoices("CG_REDIS_URL", "redis_url", "REDIS_URL"),
+    )
 
     # Security
-    secret_key: str = _load_or_create_secret()
+    secret_key: str = Field(
+        default_factory=_load_or_create_secret,
+        validation_alias=AliasChoices("CG_JWT_SECRET", "secret_key"),
+    )
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30          # access token 30 分钟
     refresh_token_expire_days: int = 7              # refresh token 7 天
+
+    # 对外来源白名单（逗号分隔）。Web 部署须显式加入站点域名，
+    # 否则浏览器跨域请求被拒；同源反代部署可留空。
+    cors_origins: str = Field(
+        "", validation_alias=AliasChoices("CG_CORS_ORIGINS", "cors_origins"))
+    # 是否信任 X-Forwarded-For（仅当前置反代可信时开启，否则可被伪造绕过限流）
+    trust_proxy: bool = Field(
+        False, validation_alias=AliasChoices("CG_TRUST_PROXY", "trust_proxy"))
+
+    # 可观测端点访问控制：/metrics 与 /events
+    metrics_token: str = Field(
+        "", validation_alias=AliasChoices("CG_METRICS_TOKEN", "metrics_token"))
+    # 语音留言密文目录是否作为静态资源对外暴露（默认关闭：仅内部读取）
+    serve_uploads: bool = Field(
+        False, validation_alias=AliasChoices("CG_SERVE_UPLOADS", "serve_uploads"))
+
+    # 上传体积上限（STT 音频 / 备份导入）
+    max_audio_upload_mb: int = 10
+    max_backup_import_mb: int = 10
+
+    # 登录防爆破：同一账号连续失败达到阈值后锁定
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
+
+    # 迁移失败时是否允许降级 create_all（仅开发；生产必须 fail-fast）
+    allow_create_all_fallback: bool = Field(
+        False,
+        validation_alias=AliasChoices("CG_ALLOW_CREATE_ALL", "allow_create_all_fallback"))
 
     # KMS — 主密钥包装密钥的托管方式
     # file:  持久化到用户目录（单机默认，重启后数据仍可解密）
     # env:   从环境变量 CG_KMS_MASTER_KEY 读取
     # aws:   AWS KMS（需配置 CG_KMS_KEY_ID + AWS 凭证）
     # local: 进程内随机密钥（不安全，重启后已加密数据无法解密）
-    kms_provider: str = "file"
-    kms_master_key: str = ""        # local/env 模式下使用
-    kms_key_id: str = ""            # aws 模式下的 KMS key ID
-    kms_aws_region: str = ""        # aws 区域
+    kms_provider: str = Field(
+        "file", validation_alias=AliasChoices("CG_KMS_PROVIDER", "kms_provider"))
+    kms_master_key: str = Field(
+        "", validation_alias=AliasChoices("CG_KMS_MASTER_KEY", "kms_master_key"))
+    kms_key_id: str = Field(
+        "", validation_alias=AliasChoices("CG_KMS_KEY_ID", "kms_key_id"))
+    kms_aws_region: str = Field(
+        "", validation_alias=AliasChoices("CG_KMS_AWS_REGION", "kms_aws_region"))
 
     # ASR (离线优先，Vosk 为默认引擎；链式降级见 services/asr_providers)
     asr_provider: str = "vosk"  # vosk | bailian | volc | none

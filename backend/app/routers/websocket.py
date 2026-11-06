@@ -22,12 +22,20 @@ settings = get_settings()
 
 
 def _verify_ws_token(token: str) -> dict:
-    """验证 JWT token，返回 payload"""
+    """验证 JWT token，返回 payload（含类型与吊销校验）"""
     try:
         payload = pyjwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        return payload
     except InvalidTokenError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    # 与 HTTP 侧一致：拒绝 refresh token 冒充，拒绝已登出（黑名单）的 token
+    if payload.get("type") not in (None, "access"):
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    jti = payload.get("jti")
+    if jti:
+        from app.redis_client import is_token_blacklisted
+        if is_token_blacklisted(jti):
+            raise HTTPException(status_code=401, detail="Token revoked")
+    return payload
 
 
 async def _get_user_from_token(token: str, db: Session) -> User:

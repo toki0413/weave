@@ -11,13 +11,17 @@ from jwt import InvalidTokenError
 from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.models import User, RefreshToken
-from app.schemas import UserCreate, UserLogin, Token, UserOut, RefreshRequest
+from app.schemas import (
+    UserCreate, UserLogin, Token, UserOut, RefreshRequest, BCRYPT_MAX_BYTES,
+)
 from app.config import get_settings
 from app.rate_limit import rate_limit
 from app.services import key_manager
 from app.services import kms
 from app.services.audit import log_audit
-from app.redis_client import blacklist_token, is_token_blacklisted
+from app.redis_client import (
+    blacklist_token, is_token_blacklisted, get_redis, mem_get, mem_set, mem_delete,
+)
 from pydantic import BaseModel, Field, model_validator
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -31,7 +35,7 @@ class RecoveryPayload(BaseModel):
     identifier: Optional[str] = None
     phone: Optional[str] = None
     recovery_code: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=72)
 
     @model_validator(mode='after')
     def _resolve_identifier(self):
@@ -41,10 +45,22 @@ class RecoveryPayload(BaseModel):
             self.identifier = self.phone
         return self
 
+    @model_validator(mode='after')
+    def _check_bytes(self):
+        if len(self.new_password.encode('utf-8')) > BCRYPT_MAX_BYTES:
+            raise ValueError(f"密码过长：UTF-8 编码后不得超过 {BCRYPT_MAX_BYTES} 字节")
+        return self
+
 
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=72)
+
+    @model_validator(mode='after')
+    def _check_bytes(self):
+        if len(self.new_password.encode('utf-8')) > BCRYPT_MAX_BYTES:
+            raise ValueError(f"密码过长：UTF-8 编码后不得超过 {BCRYPT_MAX_BYTES} 字节")
+        return self
 
 
 def _find_user_by_identifier(db: Session, identifier: str) -> Optional[User]:
@@ -61,9 +77,16 @@ def _utc_now():
 
 
 def _validate_password(password: str) -> None:
-    """检查密码复杂度：至少8位，包含字母、数字和特殊字符"""
+    """检查密码复杂度：至少8位，包含字母、数字和特殊字符，UTF-8 不超过 72 字节"""
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="密码长度至少8位")
+    # bcrypt 5.0 起拒绝 >72 字节输入；中文/emoji 密码必须按字节限制，
+    # 否则注册会以 500 结束而不是可读的校验错误。
+    if len(password.encode("utf-8")) > BCRYPT_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"密码过长：UTF-8 编码后不得超过 {BCRYPT_MAX_BYTES} 字节",
+        )
     import re
     if not re.search(r'[A-Za-z]', password):
         raise HTTPException(status_code=400, detail="密码必须包含字母")
@@ -73,14 +96,27 @@ def _validate_password(password: str) -> None:
         raise HTTPException(status_code=400, detail="密码必须包含特殊字符")
 
 
+def _bcrypt_input(plain: str) -> bytes:
+    """bcrypt 输入统一截断到 72 字节。
+
+    4.x 由底层静默截断，历史密码哈希即按截断结果生成；5.0 改为抛异常，
+    这里显式截断以保持老账号可登录（注册侧已禁止超长密码）。
+    """
+    return plain.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
+
 def verify_password(plain: str, hashed: str) -> bool:
     if isinstance(hashed, str):
         hashed = hashed.encode('utf-8')
-    return bcrypt.checkpw(plain.encode('utf-8'), hashed)
+    try:
+        return bcrypt.checkpw(_bcrypt_input(plain), hashed)
+    except ValueError:
+        # 哈希格式异常（历史脏数据）：按验证失败处理，不抛 500
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    return bcrypt.hashpw(_bcrypt_input(password), bcrypt.gensalt()).decode('utf-8')
 
 
 # 保留旧接口：密码派生 KEK，用于兼容历史数据解密回退
@@ -112,6 +148,63 @@ def _generate_recovery_code() -> str:
 def _hash_token(token: str) -> str:
     """SHA-256 摘要 refresh token，避免明文落库"""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+# ========== 登录防爆破（按账号，跨 IP 有效）==========
+_LOGIN_FAIL_PREFIX = "cg:login_fail:"
+_TIMING_HASH: Optional[str] = None
+
+
+def _login_key(identifier: str) -> str:
+    """登录标识散列后作计数键：避免手机号/用户名明文写入 Redis"""
+    digest = hashlib.sha256(identifier.strip().lower().encode("utf-8")).hexdigest()[:16]
+    return _LOGIN_FAIL_PREFIX + digest
+
+
+def _login_fail_count(key: str) -> int:
+    r = get_redis()
+    if r is not None:
+        try:
+            return int(r.get(key) or 0)
+        except Exception:
+            return 0
+    v = mem_get(key)
+    try:
+        return int(v) if v else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_login_fail(key: str, ttl_seconds: int) -> None:
+    r = get_redis()
+    if r is not None:
+        try:
+            n = r.incr(key)
+            if n == 1:
+                r.expire(key, ttl_seconds)
+            return
+        except Exception:
+            pass
+    mem_set(key, str(_login_fail_count(key) + 1), ttl_seconds)
+
+
+def _clear_login_fail(key: str) -> None:
+    r = get_redis()
+    if r is not None:
+        try:
+            r.delete(key)
+            return
+        except Exception:
+            pass
+    mem_delete(key)
+
+
+def _equalize_timing(password: str) -> None:
+    """账号不存在时也执行一次 bcrypt 校验，避免用响应时间枚举账号。"""
+    global _TIMING_HASH
+    if _TIMING_HASH is None:
+        _TIMING_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode("utf-8")
+    verify_password(password, _TIMING_HASH)
 
 
 def _cache_user_keys(user: User, password: str) -> None:
@@ -268,10 +361,21 @@ def get_current_user(
     return user
 
 
+# 自助注册允许的角色。admin / doctor 属于权限提升角色，只能由运维/管理侧
+# 在数据库中提升（否则任何人注册即可获得全站数据与密钥导出权限）。
+_SELF_REGISTER_ROLES = {"elderly", "family"}
+
+
 # ========== 路由 ==========
 @router.post("/register", response_model=Token, dependencies=[rate_limit(3, 300)])
 def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     try:
+        requested_role = (user.role or "elderly").strip().lower()
+        if requested_role not in _SELF_REGISTER_ROLES:
+            raise HTTPException(
+                status_code=400,
+                detail="自助注册仅支持 elderly / family 角色；管理员与医生账号需由运营后台开通",
+            )
         # username 唯一性校验
         existing = db.query(User).filter(User.username == user.username).first()
         if existing:
@@ -302,7 +406,7 @@ def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
             username=user.username,
             phone=user.phone,
             hashed_password=get_password_hash(user.password),
-            role=user.role,
+            role=requested_role,
             name=user.name or user.username,
             encryption_salt=encryption_salt,
             master_key_encrypted=master_key_encrypted,
@@ -346,17 +450,38 @@ def register(user: UserCreate, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token, dependencies=[rate_limit(5, 300)])
 def login(user: UserLogin, request: Request, db: Session = Depends(get_db)):
+    # 账号级锁定：IP 限流可被换 IP 绕过，这里按登录标识独立计数
+    fail_key = _login_key(user.identifier or "")
+    lock_limit = settings.login_max_failures
+    lock_seconds = settings.login_lockout_minutes * 60
+    if lock_limit > 0 and _login_fail_count(fail_key) >= lock_limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"密码错误次数过多，账号已临时锁定，请 {settings.login_lockout_minutes} 分钟后再试",
+            headers={"Retry-After": str(lock_seconds)},
+        )
+
     db_user = _find_user_by_identifier(db, user.identifier)
+    if db_user is None:
+        _equalize_timing(user.password)
+
     if not db_user or not verify_password(user.password, db_user.hashed_password):
+        if lock_limit > 0:
+            _bump_login_fail(fail_key, lock_seconds)
         log_audit(
             db, actor_role=None, action="login_failed",
             resource_type="user",
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
             status_code=401,
-            details={"identifier": user.identifier},
+            # 只记录标识散列：审计可关联同一账号的连续失败，
+            # 但不在日志中留存手机号/用户名明文（个保法最小化原则）
+            details={"identifier_ref": fail_key[len(_LOGIN_FAIL_PREFIX):]},
         )
         raise HTTPException(status_code=401, detail="手机号或密码不正确")
+
+    if lock_limit > 0:
+        _clear_login_fail(fail_key)
 
     _cache_user_keys(db_user, user.password)
     db.commit()
