@@ -10,12 +10,22 @@ import uuid
 from app.models import AnalyticsEvent, Notification, Session as DBSession, User
 
 # 与 test_notification.py 一致的注册辅助
+# 权限提升角色（doctor/admin）不在自助注册白名单内：先注册普通用户，
+# 再按运维路径在库中提升角色（见 auth.register）。
 def _register_user(client, phone, password="Test123456!", role="elderly", name=None):
-    body = {"phone": phone, "password": password, "role": role}
+    body = {"phone": phone, "password": password, "role": "elderly"}
     if name:
         body["name"] = name
     r = client.post("/api/v1/auth/register", json=body)
     assert r.status_code == 200, f"注册失败: {r.text}"
+    if role != "elderly":
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.phone == phone).update({"role": role})
+            db.commit()
+        finally:
+            db.close()
     token = r.json()["access_token"]
     return r.json(), {"Authorization": f"Bearer {token}"}
 

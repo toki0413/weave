@@ -127,7 +127,8 @@ function _connectSSE() {
     _sseSource = null;
   }
   try {
-    var url = '/events';
+    // EventSource 不支持自定义请求头，凭证经 query 参数传递（服务端强制校验）
+    var url = _token ? '/events?token=' + encodeURIComponent(_token) : '/events';
     _sseSource = new EventSource(url);
     _sseSource.onmessage = function(event) {
       try {

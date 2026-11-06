@@ -12,23 +12,46 @@ from app.services import kms
 
 @pytest.fixture
 def kms_tmp_home(tmp_path, monkeypatch):
-    """FileKMS 密钥目录指到临时目录，隔离测试与真实环境（防覆盖真机密钥）"""
+    """FileKMS 密钥目录指到临时目录，隔离测试与真实环境（防覆盖真机密钥）。
+
+    同时把 provider 锁定为 file：CI 用 CG_KMS_PROVIDER=env 跑测试，
+    若不锁定，这些用例会拿到 EnvKMS 并以「不支持导出」失败——失败
+    反映的是环境差异，不是被测逻辑。
+    """
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
+    from app.config import get_settings
+    cfg = get_settings()
+    monkeypatch.setattr(cfg, "kms_provider", "file")
+    monkeypatch.setattr(cfg, "kms_master_key", "")
     old = kms._provider
     kms._provider = None
     yield tmp_path
     kms._provider = old
 
 
-def _register(client, username, role):
+def _register(client, username, role="elderly"):
+    """注册用户并返回鉴权头。
+
+    权限提升角色走"运维在库里改 role"的路径：自助注册接口只接受
+    elderly / family，admin 必须由管理侧开通（见 auth.register）。
+    """
     r = client.post("/api/v1/auth/register", json={
         "username": username,
         "password": "Test123456!",
         "name": username,
-        "role": role,
+        "role": "elderly",
     })
     assert r.status_code == 200, r.text
+    if role != "elderly":
+        from app.database import SessionLocal
+        from app.models import User
+        db = SessionLocal()
+        try:
+            db.query(User).filter(User.username == username).update({"role": role})
+            db.commit()
+        finally:
+            db.close()
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 

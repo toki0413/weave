@@ -174,10 +174,22 @@ async def transcribe_audio(
         raise HTTPException(status_code=400, detail="请上传音频文件")
 
     suffix = ".webm" if "webm" in audio.content_type else ".wav"
+    max_bytes = get_settings().max_audio_upload_mb * 1024 * 1024
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await audio.read()
-        tmp.write(content)
         tmp_path = tmp.name
+        # 限量读取：read(n) 最多返回 n 字节，避免超大文件整体读入内存（DoS）
+        content = await audio.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            tmp.close()
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=413,
+                detail=f"音频文件过大，限制 {get_settings().max_audio_upload_mb}MB",
+            )
+        tmp.write(content)
 
     wav_path = tmp_path.rsplit(".", 1)[0] + "_16k.wav"
     try:

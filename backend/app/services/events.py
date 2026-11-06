@@ -43,18 +43,23 @@ def broadcast_event(data: dict):
 
 
 def _push_to_local_queues(msg: str):
-    """推送到本实例所有 SSE 队列"""
-    dead = []
-    for q in _event_queues:
+    """推送到本实例所有 SSE 队列。
+
+    队列满说明该客户端消费过慢：丢弃最旧一条后补入，而不是把客户端移出
+    广播列表——移出会导致连接仍在、却再也收不到消息（静默断流的假在线）。
+    """
+    for q in list(_event_queues):
         try:
             q.put_nowait(msg)
         except asyncio.QueueFull:
-            dead.append(q)
-    for q in dead:
-        try:
-            _event_queues.remove(q)
-        except ValueError:
-            pass
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
 
 
 def _ensure_subscriber():
@@ -65,16 +70,24 @@ def _ensure_subscriber():
     _subscriber_started = True
 
     def _listen():
-        try:
-            r = get_redis()
-            pubsub = r.pubsub()
-            pubsub.subscribe(_CHANNEL)
-            for msg in pubsub.listen():
-                if msg["type"] == "message":
-                    _push_to_local_queues(msg["data"])
-        except Exception as e:
-            logger.error("Redis 订阅线程异常: %s", e)
-            _subscriber_started = False
+        global _subscriber_started
+        from app.redis_client import get_pubsub_connection
+        import time as _time
+        while True:
+            try:
+                r = get_pubsub_connection()
+                if r is None:
+                    _subscriber_started = False
+                    return
+                pubsub = r.pubsub()
+                pubsub.subscribe(_CHANNEL)
+                logger.info("Redis 事件订阅已连接")
+                for msg in pubsub.listen():
+                    if msg.get("type") == "message":
+                        _push_to_local_queues(msg["data"])
+            except Exception as e:
+                logger.error("Redis 订阅线程异常，5 秒后重连: %s", e)
+                _time.sleep(5)
 
     t = threading.Thread(target=_listen, daemon=True, name="redis-subscriber")
     t.start()

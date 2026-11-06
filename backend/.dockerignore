@@ -1,0 +1,34 @@
+# 构建上下文裁剪：避免把本地密钥、测试产物、用户数据打进镜像
+.env
+.env.*
+!.env.example
+
+# Python 缓存与本地环境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+backend.spec
+
+# 测试与文档（镜像内不需要）
+tests/
+docs/
+*.md
+
+# 运行时数据：绝不打进镜像
+uploads/
+*.db
+*.db-wal
+*.db-shm
+logs/
+data/
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.vscode/
+.idea/

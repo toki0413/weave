@@ -1,0 +1,8 @@
+# ===== 开发/CI 依赖（生产镜像不安装）=====
+-r requirements.txt
+
+pytest>=9.2.0
+pytest-asyncio==1.4.0
+pytest-cov
+hypothesis==6.156.6
+sphinx==9.1.0
