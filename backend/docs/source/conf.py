@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join('..', 'app')))
 
-project = 'Cognitive Garden API'
+project = 'Weave API'
 copyright = '2024, zhiyi'
 author = 'zhiyi'
 release = '2.1.0'

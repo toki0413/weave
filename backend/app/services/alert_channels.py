@@ -47,7 +47,7 @@ def _send_email(to_addr: str, subject: str, body: str, settings) -> bool:
     sender = settings.smtp_from or settings.smtp_user
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = formataddr((str(Header("织忆·认知花园", "utf-8")), sender))
+    msg["From"] = formataddr((str(Header("织忆", "utf-8")), sender))
     msg["To"] = to_addr
 
     if settings.smtp_use_ssl:

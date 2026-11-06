@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('认知花园 E2E 测试', () => {
+test.describe('织忆 E2E 测试', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     // 等待页面初始化完成
@@ -13,15 +13,14 @@ test.describe('认知花园 E2E 测试', () => {
   });
 
   test('页面标题正确', async ({ page }) => {
-    await expect(page).toHaveTitle(/Weave.*织忆/);
+    await expect(page).toHaveTitle(/织忆/);
   });
 
   test('Header 渲染正常', async ({ page }) => {
     const header = page.locator('.header');
     await expect(header).toBeVisible();
-    // header-title 是 "Weave"，header-sub 是 "织忆"
-    await expect(page.locator('.header-title')).toContainText('Weave');
-    await expect(page.locator('.header-sub')).toContainText('织忆');
+    // 顶栏只显示产品名「织忆」，不再有副标题
+    await expect(page.locator('.header-title')).toContainText('织忆');
   });
 
   test('三视图切换正常', async ({ page }) => {
