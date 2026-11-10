@@ -11,6 +11,10 @@ from app.rate_limit import rate_limit
 from app.services.nlp import parse_narrative
 from app.services.metrics import compute_metrics_from_graph
 from app.services.health import compute_health
+# 第 8 条会话起会走个人基线重建分支；缺这行导入时 create_session 抛
+# NameError → 500（试点按每天 3 条，第 3 天即触发）。见
+# tests/test_session_baseline_rebuild.py。
+from app.services.baseline_personal import build_personal_baseline
 from app.services.notification_service import create_anomaly_notification, create_emotion_notification
 from app.services.events import broadcast_event, add_event_queue, remove_event_queue
 from app.services.crypto import encrypt, decrypt

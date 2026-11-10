@@ -19,6 +19,8 @@
 | 中文密码注册直接 500 | bcrypt 锁 5.0.0，对 >72 字节密码抛 `ValueError`，而 schema 允许 128 字符 | 校验改为 UTF-8 字节上限（422 + 可读提示）；校验侧截断至 72 字节，兼容 4.x 静默截断生成的历史哈希 | `schemas.py`、`routers/auth.py` | 80 字节密码返回 422；200 字符密码登录返回 401 而非 500 |
 | 迁移失败仍对外服务 | alembic 失败静默降级 `create_all`，实例带着与迁移历史不一致的 schema 上线 | 生产 fail-fast；降级需显式 `CG_ALLOW_CREATE_ALL=1`；PostgreSQL 迁移加 advisory lock，多副本启动串行化 | `app/main.py` | `test_deploy_config.py` + 全量迁移测试 |
 | CI 依赖安装失败 | sphinx 9.2.0 声明 `requires-python >=3.13`，CI 跑 3.12 | 固定在 9.1.1（支持 3.12 的最后一个补丁版），并在文件内注明升级条件 | `requirements-dev.txt` | 在真实 3.12.13 环境完成安装并跑通全量测试 |
+| 第 8 条会话必 500 | `create_session` 在 `history_count >= 7` 时调用 `build_personal_baseline`，该函数从未导入 → `NameError` 转成 500。试点按每天 3 条，第 3 天触发；全量测试从未创建过 8 条会话，因此一直全绿 | 补导入；新增 3 条回归用例（第 8 条、第 12 条、基线落库）；CI 增加 pyflakes 未定义名门禁 | `routers/session.py`、`tests/test_session_baseline_rebuild.py`、`ci.yml` | 修复前第 8 条复现 `NameError`，修复后 354 通过 |
+| 量表提交不广播事件 | `scale.py` 调用 `broadcast_event` 但未导入，`NameError` 被外层 `try/except` 吞掉：接口 200，家属端从未收到 `new_scale` | 补导入；新增用例直接监听事件队列断言消息内容 | `routers/scale.py`、`tests/test_scale.py` | 新增用例断言 `new_scale` 与 `elderly_id` 出现 |
 
 ### 安全与暴露面
 
@@ -62,7 +64,7 @@
 
 | # | 验收项 | 执行方式 | 通过标准 | 本次实测 |
 |---|---|---|---|---|
-| 1 | 后端测试 | `pytest tests` | 全绿 | **350 passed**（Python 3.12 与 3.13 各一轮） |
+| 1 | 后端测试 | `pytest tests` | 全绿 | **354 passed**（3.13 本地、3.12 由 CI 复核） |
 | 2 | 前端组件测试 | `npx vitest run` | 全绿 | **85 passed**（10 个文件） |
 | 3 | 前端静态验算 | `node --test "src/tests/*.spec.mjs"` | 全绿 | **54 passed**（含对比度、字号阶梯、品牌守卫） |
 | 4 | 前端构建 | `npm run build` | 成功 | 成功 |
@@ -87,9 +89,9 @@
 
 | 环境 | 后端 | 前端 |
 |---|---|---|
-| Windows / Python 3.13 | 350 passed | vitest 85、node --test 54、build ok |
-| Windows / Python 3.12.13（干净 venv，按 requirements-dev 全新安装） | 350 passed | 同左 |
-| GitHub Actions / Python 3.12 + Node 22 | 350 passed | 85 passed + 54 passed + build + lighthouse |
+| Windows / Python 3.13 | 354 passed | vitest 85、node --test 54、build ok |
+| Windows / Python 3.12.13（干净 venv，按 requirements-dev 全新安装） | 依赖安装验证通过；修复前 350 passed，修复后的 354 由 CI 在同一版本复核 | 同左 |
+| GitHub Actions / Python 3.12 + Node 22 | 354 passed | 85 passed + 54 passed + build + lighthouse |
 
 依赖版本（本基线）：
 

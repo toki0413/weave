@@ -141,3 +141,31 @@ def test_scale_history(client, auth_headers):
     data = r.json()
     assert len(data) >= 1
     assert data[0]["scale_type"] == "ad8"
+
+
+def test_submit_broadcasts_new_scale_event(client, auth_headers):
+    """提交答卷应向 SSE 广播 new_scale 事件
+
+    此前 `broadcast_event` 未导入，NameError 被外层 try/except 吞掉：
+    接口照常 200，但家属端从未收到通知（静默失效）。这里直接监听本地队列。
+    """
+    import asyncio
+    from app.services.events import add_event_queue, remove_event_queue
+
+    q = asyncio.Queue(maxsize=10)
+    add_event_queue(q)
+    try:
+        scale = SCALES["mmse"]
+        answers = [{"question_id": x["id"], "score": x["max_score"]} for x in scale["questions"]]
+        r = client.post(
+            "/api/v1/scale/mmse/submit",
+            headers=auth_headers["headers"],
+            json={"answers": answers},
+        )
+        assert r.status_code == 200, r.text
+
+        msg = q.get_nowait()
+        assert '"new_scale"' in msg, f"事件类型不符: {msg[:200]}"
+        assert "elderly_id" in msg
+    finally:
+        remove_event_queue(q)
