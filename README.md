@@ -196,6 +196,8 @@ npx playwright test
 
 ## 部署
 
+交付验收状态、已修复问题清单与剩余风险见 [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md)。
+
 ### 桌面应用分发
 1. 构建前端：`cd frontend && npm run build`
 2. 构建后端：`cd backend && pyinstaller backend.spec`
