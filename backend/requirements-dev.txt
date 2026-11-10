@@ -5,4 +5,6 @@ pytest>=9.2.0
 pytest-asyncio==1.4.1.post1
 pytest-cov
 hypothesis==6.170.14
-sphinx==9.2.0
+# sphinx 9.2 起要求 Python >=3.13，CI 跑 3.12 —— 停在 9.1.x 的最后一个补丁版本。
+# CI 升到 3.13 后可跟随升级。
+sphinx==9.1.1
