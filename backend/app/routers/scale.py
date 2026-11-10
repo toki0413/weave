@@ -11,6 +11,9 @@ from app.routers.auth import get_current_user
 from app.services.scales import SCALES, get_scale, list_scales, interpret, correlate_scale_with_graph
 from app.services import key_manager
 from app.services.crypto import encrypt_json, decrypt_json
+# 提交答卷后向家属端广播 new_scale 事件。此前缺这行导入，NameError 被外层
+# try/except 吞掉，接口照常返回 200，但实时通知从未发出（静默失效）。
+from app.services.events import broadcast_event
 from app.middleware.permission import filter_by_permission, require_permission
 from app.services.sync_protocol import _get_device_sync, _increment_vector_clock
 import asyncio
