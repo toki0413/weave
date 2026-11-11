@@ -51,8 +51,13 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # apt 源偶发挂起时，没有超时会一直拖到 job 的 6 小时上限：
+      # 曾出现这一步卡住 20 分钟以上，测试根本来不及跑。
       - name: Install ffmpeg (for STT)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        timeout-minutes: 4
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Install dependencies
         run: |
