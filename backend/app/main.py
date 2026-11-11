@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 import os
 import re
 import sys
@@ -176,27 +177,39 @@ init_redis()
 from app.services.kms import init_kms
 init_kms()
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动/关闭钩子（替代已弃用的 @app.on_event）
+
+    启动：漏录日课提醒 + 家属周摘要，两个进程内日/周任务，均可用开关停用。
+    关闭：取消任务并等待退出。旧实现只启动不停止，进程退出或热重载时
+    任务残留在事件循环里，asyncio 会打印 "Task was destroyed but it is
+    pending"，测试中反复进出应用也会累积。
+    """
+    from app.services.missed_checkin_job import start_daily_job, stop_daily_job
+    from app.services.weekly_digest_job import start_weekly_job, stop_weekly_job
+
+    start_daily_job()
+    start_weekly_job()
+    try:
+        yield
+    finally:
+        await stop_weekly_job()
+        await stop_daily_job()
+
+
 app = FastAPI(
     title="Weave API",
     description="Weave · 织忆 - 认知辅助工具后端",
     version="2.1.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
+    lifespan=lifespan,
 )
 
-# 漏录日课提醒：进程内日任务（单机试点够用，不引 APScheduler/Celery）。
-# 多 worker 由 Redis SETNX 锁去重，Redis 不可用时退化到进程内日期标记；
-# 关掉开关（missed_checkin_enabled=false）即可完全停用。
-@app.on_event("startup")
-async def _start_missed_checkin_job():
-    from app.services.missed_checkin_job import start_daily_job
-    start_daily_job()
-
-# 家属周摘要周任务（G5）：同一调度骨架，每周一上午（北京）；Redis 周锁去重
-@app.on_event("startup")
-async def _start_weekly_digest_job():
-    from app.services.weekly_digest_job import start_weekly_job
-    start_weekly_job()
+# 漏录日课提醒与家属周摘要的启动/停止已收拢到 lifespan（见文件上方），
+# 单机试点够用，不引 APScheduler/Celery。多 worker 由 Redis SETNX 锁去重，
+# Redis 不可用时退化到进程内日期标记；关掉开关即可完全停用。
 
 # 请求日志中间件：为每个请求生成 request_id，异常日志与错误响应共用同一标识
 @app.middleware("http")

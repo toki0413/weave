@@ -177,3 +177,17 @@ def start_weekly_job():
                     "一二三四五六日"[settings.weekly_digest_weekday],
                     settings.weekly_digest_hour)
     return _task
+
+
+async def stop_weekly_job() -> None:
+    """取消后台任务并等待其退出（应用关闭时调用）；重复调用安全"""
+    global _task
+    task, _task = _task, None
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    logger.info("家属周摘要周任务已停止")
