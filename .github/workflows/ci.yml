@@ -51,13 +51,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      # apt 源偶发挂起时，没有超时会一直拖到 job 的 6 小时上限：
-      # 曾出现这一步卡住 20 分钟以上，测试根本来不及跑。
-      - name: Install ffmpeg (for STT)
-        timeout-minutes: 4
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends ffmpeg
+      # 不装 ffmpeg：STT 测试把 _convert_to_wav 打桩（见
+      # test_stt_lexicon_wiring.py），没有用例真的调用它。此前这个步骤
+      # 在 apt 镜像慢时下到 7 KB/s，装几十 MB 依赖能挂 20 分钟以上，
+      # 让后面的测试根本没机会开始。
 
       - name: Install dependencies
         run: |
