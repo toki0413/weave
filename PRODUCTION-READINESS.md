@@ -64,7 +64,7 @@
 
 | # | 验收项 | 执行方式 | 通过标准 | 本次实测 |
 |---|---|---|---|---|
-| 1 | 后端测试 | `pytest tests` | 全绿 | **354 passed**（3.13 本地、3.12 由 CI 复核） |
+| 1 | 后端测试 | `pytest tests` | 全绿 | **366 passed**（3.13 本地、3.12 由 CI 复核） |
 | 2 | 前端组件测试 | `npx vitest run` | 全绿 | **85 passed**（10 个文件） |
 | 3 | 前端静态验算 | `node --test "src/tests/*.spec.mjs"` | 全绿 | **54 passed**（含对比度、字号阶梯、品牌守卫） |
 | 4 | 前端构建 | `npm run build` | 成功 | 成功 |
@@ -73,6 +73,7 @@
 | 7 | CI 门禁 | GitHub Actions | 5 项全绿 | **5/5**（backend-security、backend-test、frontend-security、frontend-test、lighthouse） |
 | 8 | 部署配置不变量 | `pytest tests/test_deploy_config.py` | 全绿 | **20 passed** |
 | 9 | 安全边界 | `pytest tests/test_security_hardening.py` | 全绿 | **19 passed** |
+| 9b | 端点冒烟 | `pytest tests/test_endpoint_smoke.py` | 无 5xx | **39 个 GET 端点全部无 5xx** |
 | 10 | 反代安全头 | `curl -sI http://<host>/ \| grep -i x-content-type` | 含 `nosniff` | 配置已就位，需在部署环境复核 |
 | 11 | 指标不外泄 | `curl -s -o /dev/null -w '%{http_code}' http://<host>/metrics` | `404` | 同上 |
 | 12 | 上传目录不外泄 | `curl -s -o /dev/null -w '%{http_code}' http://<host>/uploads/x` | `404` | 同上 |
@@ -89,9 +90,9 @@
 
 | 环境 | 后端 | 前端 |
 |---|---|---|
-| Windows / Python 3.13 | 354 passed | vitest 85、node --test 54、build ok |
+| Windows / Python 3.13 | 366 passed | vitest 85、node --test 54、build ok |
 | Windows / Python 3.12.13（干净 venv，按 requirements-dev 全新安装） | 依赖安装验证通过；修复前 350 passed，修复后的 354 由 CI 在同一版本复核 | 同左 |
-| GitHub Actions / Python 3.12 + Node 22 | 354 passed | 85 passed + 54 passed + build + lighthouse |
+| GitHub Actions / Python 3.12 + Node 22 | 366 passed | 85 passed + 54 passed + build + lighthouse |
 
 依赖版本（本基线）：
 
