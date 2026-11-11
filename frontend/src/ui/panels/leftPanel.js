@@ -13,7 +13,7 @@ import { createVoiceEditor } from '../voice-editor.js';
 import { withLoading } from '../loading.js';
 import { showToast } from '../toast.js';
 import { trapFocus } from '../interactions.js';
-import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode, getDailyPrompt, trackEvent, markSessionSource, deleteAccount, logout } from '../../api/client.js';
+import { uploadAudio, isLoggedIn, exportBackup, importBackup, exportLogs, getRecoveryCode, getDailyPrompt, trackEvent, markSessionSource, deleteAccount, logout, getFamilyMembers } from '../../api/client.js';
 
 function getGraphApis() {
   return window.__graphApis || {
@@ -752,9 +752,10 @@ function renderLeftPanel() {
         className: 'cg-btn',
         style: { width: '100%', marginTop: '8px' },
         onclick: function() {
-          import('../../api/client.js').then(function(api) {
-            return api.getFamilyMembers();
-          }).then(function(list) {
+          // client.js 已在顶部静态导入；动态 import 同一模块不会产生
+          // 独立 chunk，只会触发 rollup 的 INEFFECTIVE_DYNAMIC_IMPORT。
+          // lexicon-manager.js 仍按需加载（只在点开时才需要）。
+          getFamilyMembers().then(function(list) {
             if (!list || !list.length) {
               alert('请先关联老人，再帮 TA 维护常用的名字和地点。');
               return;
