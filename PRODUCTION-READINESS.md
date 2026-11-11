@@ -64,7 +64,7 @@
 
 | # | 验收项 | 执行方式 | 通过标准 | 本次实测 |
 |---|---|---|---|---|
-| 1 | 后端测试 | `pytest tests` | 全绿 | **366 passed**（3.13 本地、3.12 由 CI 复核） |
+| 1 | 后端测试 | `pytest tests` | 全绿 | **369 passed**（3.13 本地、3.12 由 CI 复核） |
 | 2 | 前端组件测试 | `npx vitest run` | 全绿 | **85 passed**（10 个文件） |
 | 3 | 前端静态验算 | `node --test "src/tests/*.spec.mjs"` | 全绿 | **54 passed**（含对比度、字号阶梯、品牌守卫） |
 | 4 | 前端构建 | `npm run build` | 成功 | 成功 |
@@ -90,9 +90,9 @@
 
 | 环境 | 后端 | 前端 |
 |---|---|---|
-| Windows / Python 3.13 | 366 passed | vitest 85、node --test 54、build ok |
+| Windows / Python 3.13 | 369 passed | vitest 85、node --test 54、build ok |
 | Windows / Python 3.12.13（干净 venv，按 requirements-dev 全新安装） | 依赖安装验证通过；修复前 350 passed，修复后的 354 由 CI 在同一版本复核 | 同左 |
-| GitHub Actions / Python 3.12 + Node 22 | 366 passed | 85 passed + 54 passed + build + lighthouse |
+| GitHub Actions / Python 3.12 + Node 22 | 369 passed | 85 passed + 54 passed + build + lighthouse |
 
 依赖版本（本基线）：
 
@@ -100,7 +100,7 @@
 - 后端开发：pytest 9.2.0、pytest-asyncio 1.4.1.post1、hypothesis 6.170.14、sphinx 9.1.1
 - 前端：vite 8.3.6、vitest 5.1.0、jsdom 31.0.0、@playwright/test 1.65.0、@sentry/browser 11.11.0
 
-已知告警：FastAPI 0.162 对 `@app.on_event` 发出弃用警告（两个 startup 钩子功能正常），迁移到 lifespan 记为后续技术债。
+已知告警：运行时只剩 2 条与业务无关的警告（alembic 配置、第三方库），`@app.on_event` 弃用警告已随 lifespan 迁移消失。
 
 **未覆盖的验证**：
 
@@ -117,16 +117,15 @@
 |---|---|---|---|---|
 | 1 | ASR 生产密钥未配置（火山 `asr_volc_*`、百炼 `bailian_api_key`） | Vosk 拒识后方言用户直接 503 | 部署方 | 控制台开通三项凭据，用真实方言样本跑一轮验收 |
 | 2 | 试点数据为零 | 无法验证临床价值，P2 优先级无据可依 | 产品 | 试点 2–4 周后产出首份漏斗报告（fill_rate / submit_rate / 误报率 / 告警解决率） |
-| 3 | 实时通道为进程内实现 | 多 worker 部署时 SSE 断流 | 工程 | 扩容前接入 Redis pub/sub（广播层已具备）+ 粘性会话或改单 worker |
+| 3 | WebSocket 连接表为进程内实现 | 多 worker 部署时 `/ws` 的消息无法路由到持有连接的进程（`/events` 已走 Redis pub/sub，不受影响） | 工程 | 扩容前把 connection_manager 改为 Redis 扇出，或明确保持单 worker |
 | 4 | KMS file 模式密钥需人工备份 | wrap key 丢失 = 全部密文不可解 | 运维 | 首启后立即 `GET /backup/kms-wrap-key` 导出并异地保存 |
 | 5 | 备份与数据同机 | 整机故障时数据与备份同时丢失 | 运维 | 把 `cg_pg_backups` 卷同步到对象存储 |
 | 6 | 无像素级视觉回归基线 | UI 改动可能引入未被发现的视觉偏差 | 前端 | 引入 Percy / Chromatic 或 Playwright 截图基线 |
-| 7 | `on_event` 已弃用 | 未来 FastAPI 版本移除后启动钩子失效 | 工程 | 迁移到 lifespan（两个钩子，改动集中） |
-| 8 | 自助注册不含管理员 | 新环境无人可开管理员 | 部署方 | 首启按 README 执行一次 `UPDATE users SET role='admin'` |
-| 9 | 微信内录音依赖用户手动切换浏览器 | 落地页到录音的转化可能损失 | 产品 | 试点期间统计微信内来源占比，据此决定是否做小程序形态 |
-| 10 | 多家属 / 多老人未支持（1:1 绑定） | 多子女家庭需共享账号 | 产品 | 试点后按家庭形态数据评估 |
+| 7 | 自助注册不含管理员 | 新环境无人可开管理员 | 部署方 | 首启按 README 执行一次 `UPDATE users SET role='admin'` |
+| 8 | 微信内录音依赖用户手动切换浏览器 | 落地页到录音的转化可能损失 | 产品 | 试点期间统计微信内来源占比，据此决定是否做小程序形态 |
+| 9 | 多家属 / 多老人未支持（1:1 绑定） | 多子女家庭需共享账号 | 产品 | 试点后按家庭形态数据评估 |
 
-风险 1、4、5、8 属于部署动作，代码侧已就绪但无法在本仓库内闭合；2、9、10 需要真实用户数据才能排期。
+风险 1、4、5、7 属于部署动作，代码侧已就绪但无法在本仓库内闭合；2、8、9 需要真实用户数据才能排期。
 
 ---
 

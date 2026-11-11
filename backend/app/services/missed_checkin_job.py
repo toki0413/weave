@@ -110,3 +110,21 @@ def start_daily_job():
         _task = asyncio.create_task(_loop())
         logger.info("漏录提醒日任务已启动：每天 %02d:00（北京）", settings.missed_checkin_hour)
     return _task
+
+
+async def stop_daily_job() -> None:
+    """取消后台任务并等待其退出（应用关闭时调用）
+
+    任务体是无限循环 + sleep，取消时会在 await 处抛 CancelledError，
+    这里吞掉它是预期行为——重复调用安全。
+    """
+    global _task
+    task, _task = _task, None
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    logger.info("漏录提醒日任务已停止")
