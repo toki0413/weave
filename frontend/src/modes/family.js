@@ -1,7 +1,7 @@
 // ============ FAMILY MODE (3D Nebula Immersive) ============
 // 家属端：默认 3D 星云浏览，飞行漫游，时间筛选，情感色彩
 import { el } from '../ui/components.js';
-import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare, generateMemoryCard, getLatestMemoryCard, trackEvent, getFamilyMembers, linkFamilyMember, invalidateCache } from '../api/client.js';
+import { listSessions, getHealthTrend, getNotifications, getLatestGraph, sendWebSocketCare, generateMemoryCard, getLatestMemoryCard, trackEvent, getFamilyMembers, linkFamilyMember, invalidateCache, getDeclineAnalysis } from '../api/client.js';
 import { connect as wsConnect, send as wsSend, isConnected, isUsingSSE } from '../services/websocket.js';
 import { getToken } from '../api/client.js';
 
@@ -299,15 +299,16 @@ export function renderFamilyMode(container, elderlyData) {
   app.appendChild(tierSlot);
 
   function refreshTierCard() {
+    // client.js 已在文件顶部静态导入，这里动态 import 同一模块不会产生
+    // 独立 chunk（rollup 会警告 INEFFECTIVE_DYNAMIC_IMPORT），直接调用。
+    // decline.js 仍按需加载——它是只在展开小结卡时才需要的渲染模块。
+    var eid = data.elderlyId || null;
     Promise.all([
-      import('../api/client.js'),
+      getDeclineAnalysis(7, eid),
       import('../ui/decline.js'),
-    ]).then(function(mods) {
+    ]).then(function(res) {
       // 显式带上当前选中老人：多老人切换时卡跟着换，不再读家属自己的空数据
-      var eid = data.elderlyId || null;
-      mods[0].getDeclineAnalysis(7, eid).then(function(a) {
-        mods[1].renderTierInto(tierSlot, a);
-      }).catch(function() {});
+      res[1].renderTierInto(tierSlot, res[0]);
     }).catch(function() {});
   }
   refreshTierCard();
