@@ -10,7 +10,7 @@ PyJWT==2.15.1
 passlib[bcrypt]==1.7.4
 bcrypt==5.0.0
 cryptography>=50.0.2
-python-multipart==0.0.32
+python-multipart==0.0.33
 httpx==0.28.1
 jieba==0.42.1
 alembic==1.20.1
