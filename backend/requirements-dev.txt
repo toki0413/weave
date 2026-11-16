@@ -4,7 +4,7 @@
 pytest>=9.2.0
 pytest-asyncio==1.4.1.post1
 pytest-cov
-hypothesis==6.170.14
+hypothesis==6.170.15
 # CI 用它拦截未定义名（F821）：曾有一个函数被调用却从未导入，接口 500
 # 而全量测试没走到那条路径。
 pyflakes==3.4.0
